@@ -104,4 +104,63 @@ function mergeHealthActivity(store, normalized) {
   store.activities.sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
 }
 
-module.exports = { mapWorkoutType, validatePayload, normalizeHealthPayload, mergeHealthActivity, buildStableId };
+// Manuelle Aktivitäten (siehe Verbesserungs-Roadmap, Phase 3): für Einheiten,
+// die Health/Strava nicht sauber erfasst (Studio-Kurs ohne Uhr, Krafttraining
+// ohne Tracking o.ä.). Bewusst nur eine feste Liste bekannter Sportarten
+// zugelassen (statt Freitext), damit analysis.js/planner.js sie genauso wie
+// importierte Aktivitäten behandeln können (Fallback-Intensitätsfaktoren etc.
+// sind pro Sportart hinterlegt).
+const VALID_MANUAL_SPORTS = [
+  'Run', 'TrailRun', 'Ride', 'VirtualRide', 'Swim',
+  'WeightTraining', 'Walk', 'Hike', 'Yoga', 'Workout'
+];
+
+function validateManualActivity(body) {
+  if (!body || typeof body !== 'object') {
+    return { ok: false, error: 'Kein gültiges JSON-Objekt empfangen.' };
+  }
+  if (!body.startDate || Number.isNaN(new Date(body.startDate).getTime())) {
+    return { ok: false, error: 'Feld "startDate" fehlt oder ist kein gültiges Datum.' };
+  }
+  if (!isFiniteNumber(body.durationMin) || body.durationMin <= 0) {
+    return { ok: false, error: 'Feld "durationMin" fehlt oder ist keine positive Zahl (Dauer in Minuten erwartet).' };
+  }
+  if (!body.type || !VALID_MANUAL_SPORTS.includes(body.type)) {
+    return { ok: false, error: `Feld "type" fehlt oder ist keine unterstützte Sportart (${VALID_MANUAL_SPORTS.join(', ')}).` };
+  }
+  return { ok: true };
+}
+
+function normalizeManualActivity(body) {
+  const startDate = new Date(body.startDate).toISOString();
+  const movingTimeSec = Math.round(body.durationMin * 60);
+  return {
+    id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    source: 'manual',
+    name: body.name || body.type,
+    rawType: null,
+    type: body.type,
+    startDate,
+    movingTimeSec,
+    elapsedTimeSec: movingTimeSec,
+    distanceMeters: isFiniteNumber(body.distanceKm) ? Math.round(body.distanceKm * 1000) : 0,
+    elevationGainMeters: 0,
+    averageHeartrate: isFiniteNumber(body.averageHeartrate) ? body.averageHeartrate : null,
+    maxHeartrate: null,
+    averageWatts: null,
+    sufferScore: null,
+    averageSpeedMs: null,
+    activeEnergyKcal: null
+  };
+}
+
+module.exports = {
+  mapWorkoutType,
+  validatePayload,
+  normalizeHealthPayload,
+  mergeHealthActivity,
+  buildStableId,
+  VALID_MANUAL_SPORTS,
+  validateManualActivity,
+  normalizeManualActivity
+};

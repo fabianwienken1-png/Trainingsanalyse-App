@@ -105,6 +105,11 @@ function evaluatePreviousWeek(store) {
 
   const weekStart = new Date(plan.currentWeekStart + 'T00:00:00Z');
   const evaluated = plan.sessions.map((session) => {
+    // Manuell gesetzter Status (siehe POST /api/plan/session-status) hat
+    // Vorrang vor der automatischen ±1-Tag-Erkennung - der Nutzer weiß es
+    // besser als die Heuristik (z.B. Einheit ohne Tracking absolviert, oder
+    // bewusst als "übersprungen" markiert statt fälschlich "erledigt").
+    if (session.manualOverride) return session;
     const sessionDate = new Date(session.day + 'T00:00:00Z');
     const match = activities.find((act) => {
       const actDate = new Date(act.startDate);

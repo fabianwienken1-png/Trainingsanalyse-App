@@ -222,6 +222,77 @@ route('GET', '/api/backup', async (req, res) => {
   res.end(body);
 });
 
+// Liefert Aktivitäten mit optionalen Filtern (Suche/Sportart) für die
+// Aktivitätentabelle im Frontend (siehe Verbesserungs-Roadmap, Phase 3).
+// Eigener Endpoint statt Erweiterung von /api/state, da /api/state bewusst nur
+// die letzten 20 für die Kurzübersicht liefert (?q= durchsucht Name/Sportart,
+// ?sport= filtert exakt, ?limit= deckelt die Ergebnisliste).
+route('GET', '/api/activities', async (req, res, urlObj) => {
+  const s = await loadStore();
+  const q = (urlObj.searchParams.get('q') || '').trim().toLowerCase();
+  const sport = urlObj.searchParams.get('sport') || '';
+  const limit = Math.min(500, Math.max(1, Number(urlObj.searchParams.get('limit')) || 200));
+  let list = s.activities;
+  if (sport) {
+    list = list.filter((a) => a.type === sport);
+  }
+  if (q) {
+    list = list.filter(
+      (a) => (a.name || '').toLowerCase().includes(q) || (a.type || '').toLowerCase().includes(q)
+    );
+  }
+  sendJson(res, 200, { activities: list.slice(0, limit), total: list.length });
+});
+
+// Legt eine manuell erfasste Aktivität an (siehe health-import.js,
+// normalizeManualActivity) - für Einheiten, die Health/Strava nicht sauber
+// erfasst haben (z.B. Studio-Kurs ohne Uhr am Handgelenk).
+route('POST', '/api/activities', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const validation = healthImport.validateManualActivity(body);
+  if (!validation.ok) {
+    return sendError(res, 400, validation.error);
+  }
+  const s = await loadStore();
+  const normalized = healthImport.normalizeManualActivity(body);
+  healthImport.mergeHealthActivity(s, normalized);
+  await saveStore(s);
+  sendJson(res, 201, { activity: normalized });
+});
+
+// Setzt den Status einer einzelnen Plan-Session der laufenden Woche manuell
+// (erledigt/übersprungen/zurücksetzen auf geplant) - unabhängig von der
+// automatischen ±1-Tag-Erkennung beim nächsten Wochenwechsel (siehe
+// planner.js, evaluatePreviousWeek). Das gesetzte "manualOverride"-Flag sorgt
+// dafür, dass die Entscheidung beim nächsten "Neue Woche planen" nicht wieder
+// von der Automatik überschrieben wird.
+route('POST', '/api/plan/session-status', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const { sessionId, status } = body || {};
+  if (!sessionId || !['planned', 'done', 'missed'].includes(status)) {
+    return sendError(res, 400, 'Felder "sessionId" und "status" (planned|done|missed) sind erforderlich.');
+  }
+  const s = await loadStore();
+  const session = (s.plan.sessions || []).find((sess) => sess.id === sessionId);
+  if (!session) {
+    return sendError(res, 404, 'Session nicht gefunden (evtl. wurde inzwischen eine neue Woche geplant).');
+  }
+  session.status = status;
+  session.manualOverride = status !== 'planned';
+  await saveStore(s);
+  sendJson(res, 200, { plan: s.plan });
+});
+
 // Löscht eine einzelne Aktivität (z.B. Test-Trainings, die man in Health/Strava
 // zwar entfernt hat, die aber - da unser Import rein additiv ist, siehe
 // health-import.js/health-auto-export.js - sonst für immer in der App
