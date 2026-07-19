@@ -64,8 +64,28 @@
   </section>
 
   <section class="card">
-    <h2>Letzte Aktivitäten</h2>
+    <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h2 style="margin:0;">Letzte Aktivitäten</h2>
+      <button id="open-add-activity-btn" class="small" type="button">+ Aktivität hinzufügen</button>
+    </div>
+    <div class="filter-row">
+      <input id="activity-search" type="text" placeholder="Suche nach Name oder Sportart..." />
+      <select id="activity-sport-filter">
+        <option value="">Alle Sportarten</option>
+        <option value="Run">Laufen</option>
+        <option value="TrailRun">Trail-Laufen</option>
+        <option value="Ride">Radfahren</option>
+        <option value="VirtualRide">Rad (virtuell)</option>
+        <option value="Swim">Schwimmen</option>
+        <option value="WeightTraining">Krafttraining</option>
+        <option value="Walk">Gehen</option>
+        <option value="Hike">Wandern</option>
+        <option value="Yoga">Yoga</option>
+        <option value="Workout">Workout</option>
+      </select>
+    </div>
     <div id="activities-table"></div>
+    <div id="activities-loadmore" style="margin-top:12px; text-align:center;"></div>
   </section>
 
 </main>
@@ -110,6 +130,53 @@
     </p>
     <div class="dialog-actions" style="justify-content: space-between;">
       <button type="button" class="small" id="export-backup-btn">Backup exportieren</button>
+      <button type="submit" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="add-activity-dialog">
+  <div class="dialog-header">
+    <h3>Aktivität hinzufügen</h3>
+    <button class="small" id="close-add-activity-btn" type="button">Schließen</button>
+  </div>
+  <form id="add-activity-form" class="dialog-body">
+    <div class="form-row">
+      <label for="activity-name">Name (optional)</label>
+      <input id="activity-name" type="text" placeholder="z.B. Krafttraining Studio" />
+    </div>
+    <div class="form-row">
+      <label for="activity-type">Sportart</label>
+      <select id="activity-type">
+        <option value="Run">Laufen</option>
+        <option value="TrailRun">Trail-Laufen</option>
+        <option value="Ride">Radfahren</option>
+        <option value="VirtualRide">Rad (virtuell)</option>
+        <option value="Swim">Schwimmen</option>
+        <option value="WeightTraining">Krafttraining</option>
+        <option value="Walk">Gehen</option>
+        <option value="Hike">Wandern</option>
+        <option value="Yoga">Yoga</option>
+        <option value="Workout">Workout (allgemein)</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="activity-date">Datum &amp; Uhrzeit</label>
+      <input id="activity-date" type="datetime-local" required />
+    </div>
+    <div class="form-row">
+      <label for="activity-duration">Dauer (Minuten)</label>
+      <input id="activity-duration" type="number" min="1" max="600" required />
+    </div>
+    <div class="form-row">
+      <label for="activity-distance">Distanz (km, optional)</label>
+      <input id="activity-distance" type="number" min="0" step="0.1" />
+    </div>
+    <div class="form-row">
+      <label for="activity-hr">Ø Herzfrequenz (optional)</label>
+      <input id="activity-hr" type="number" min="60" max="220" />
+    </div>
+    <div class="dialog-actions">
       <button type="submit" class="primary">Speichern</button>
     </div>
   </form>
