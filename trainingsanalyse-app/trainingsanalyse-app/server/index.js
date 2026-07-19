@@ -106,7 +106,7 @@ function getBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
-function serveStatic(req, res, pathname) {
+function serveStatic(req, res, pathname, headOnly) {
   let filePath = pathname === '/' ? '/index.html' : pathname;
   const fullPath = path.normalize(path.join(PUBLIC_DIR, filePath));
   if (!fullPath.startsWith(PUBLIC_DIR)) {
@@ -119,8 +119,11 @@ function serveStatic(req, res, pathname) {
       return;
     }
     const ext = path.extname(fullPath);
-    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
-    res.end(content);
+    res.writeHead(200, {
+      'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+      'Content-Length': content.length
+    });
+    res.end(headOnly ? undefined : content);
   });
 }
 
@@ -469,14 +472,19 @@ const server = http.createServer(async (req, res) => {
     const urlObj = new URL(req.url, `http://${req.headers.host}`);
     const pathname = urlObj.pathname;
 
-    const matched = matchRoute(req.method, pathname);
+    // HEAD wie GET behandeln (u.a. für Uptime-Monitore wie UptimeRobot, die
+    // standardmäßig HEAD statt GET schicken, um Bandbreite zu sparen) - ohne
+    // das würde jeder Wach-halt-Ping fälschlich als 404 gewertet.
+    const routeMethod = req.method === 'HEAD' ? 'GET' : req.method;
+
+    const matched = matchRoute(routeMethod, pathname);
     if (matched) {
       await matched.handler(req, res, urlObj);
       return;
     }
 
-    if (req.method === 'GET') {
-      serveStatic(req, res, pathname);
+    if (routeMethod === 'GET') {
+      serveStatic(req, res, pathname, req.method === 'HEAD');
       return;
     }
 
