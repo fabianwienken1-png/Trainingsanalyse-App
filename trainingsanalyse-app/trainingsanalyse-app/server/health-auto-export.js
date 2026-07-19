@@ -167,6 +167,63 @@ function normalizeWorkout(w) {
   };
 }
 
+// Sucht eine bestimmte Metrik (z.B. "resting_heart_rate") im metrics-Array
+// des Payloads. Health Auto Export sendet Metriken standardmäßig NICHT bei
+// jedem Workout-Sync mit - nur wenn in der App-Automatisierung zusätzlich
+// "Gesundheitsmetriken" aktiviert wurde. Gibt null zurück, falls nicht vorhanden.
+function extractMetric(body, name) {
+  const metrics = body && body.data && Array.isArray(body.data.metrics) ? body.data.metrics : [];
+  return metrics.find((m) => m && m.name === name) || null;
+}
+
+// Mittelwert der letzten `count` Messwerte einer Metrik (nach Datum sortiert).
+// Ein Mittelwert über mehrere Tage ist stabiler als der letzte Einzelwert
+// (z.B. schwankt der Ruhepuls von Tag zu Tag etwas).
+function averageRecentMetricValue(metric, count) {
+  if (!metric || !Array.isArray(metric.data) || metric.data.length === 0) return null;
+  const sorted = metric.data
+    .filter((d) => d && isFiniteNumber(d.qty) && d.date)
+    .slice()
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const recent = sorted.slice(-count).map((d) => d.qty);
+  if (recent.length === 0) return null;
+  return Math.round(recent.reduce((a, b) => a + b, 0) / recent.length);
+}
+
+// Leitet Ruhepuls/Maximalpuls für die Athlet-Einstellungen ab, FALLS dort noch
+// keine Werte gesetzt sind (überschreibt nie einen vom Nutzer selbst
+// eingetragenen Wert). Ruhepuls kommt aus der "resting_heart_rate"-Metrik im
+// Payload (Ø der letzten 14 Messwerte); Maximalpuls aus dem höchsten bisher
+// über alle Aktivitäten beobachteten Herzfrequenz-Wert (grobe, aber reale
+// Untergrenze - der Nutzer kann sie in den Einstellungen jederzeit anpassen).
+// Wichtig für analysis.js: ohne diese Werte fällt die Trainingslast-Berechnung
+// auf eine deutlich ungenauere Sportart-Pauschale zurück (siehe computeActivityLoad).
+function deriveAthleteDefaults(store, body) {
+  const changes = {};
+
+  if (!store.athlete.restingHR) {
+    const restingMetric = extractMetric(body, 'resting_heart_rate');
+    const avgResting = averageRecentMetricValue(restingMetric, 14);
+    if (avgResting) {
+      store.athlete.restingHR = avgResting;
+      changes.restingHR = avgResting;
+    }
+  }
+
+  if (!store.athlete.maxHR) {
+    const observedMax = store.activities.reduce(
+      (max, a) => (typeof a.maxHeartrate === 'number' && a.maxHeartrate > max ? a.maxHeartrate : max),
+      0
+    );
+    if (observedMax > 0) {
+      store.athlete.maxHR = observedMax;
+      changes.maxHR = observedMax;
+    }
+  }
+
+  return changes;
+}
+
 // Verarbeitet den kompletten Payload: normalisiert jedes Workout, merged die
 // gültigen in den Store und gibt eine kleine Statistik zurück, die der
 // Route-Handler direkt als Antwort zurückschicken kann.
@@ -194,6 +251,9 @@ module.exports = {
   energyToKcal,
   elevationToMeters,
   extractWorkouts,
+  extractMetric,
+  averageRecentMetricValue,
+  deriveAthleteDefaults,
   normalizeWorkout,
   processPayload
 };

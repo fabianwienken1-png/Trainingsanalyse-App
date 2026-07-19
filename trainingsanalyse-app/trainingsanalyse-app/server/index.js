@@ -264,6 +264,14 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
   if (result.imported.length > 0) {
     s.appleHealth.lastImportAt = new Date().toISOString();
     s.appleHealth.importCount = (s.appleHealth.importCount || 0) + result.imported.length;
+  }
+
+  // Ruhepuls/Maximalpuls automatisch übernehmen, falls in den Einstellungen
+  // noch leer (siehe deriveAthleteDefaults in health-auto-export.js) - macht
+  // die Trainingslast-Berechnung ab dem nächsten Sync spürbar genauer.
+  const athleteDefaults = healthAutoExport.deriveAthleteDefaults(s, body);
+
+  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0) {
     await saveStore(s);
   }
 
@@ -273,12 +281,16 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
   if (result.totalWorkouts > 0 && result.imported.length === 0) {
     console.log('[health-auto-export] Keines der Workouts konnte geparst werden. Felder des ersten Eintrags:', result.skipped[0]);
   }
+  if (Object.keys(athleteDefaults).length > 0) {
+    console.log('[health-auto-export] Athlet-Einstellungen automatisch abgeleitet:', athleteDefaults);
+  }
 
   sendJson(res, 200, {
     received: true,
     totalWorkouts: result.totalWorkouts,
     imported: result.imported.length,
     skipped: result.skipped.length,
+    athleteDefaultsSet: athleteDefaults,
     activities: result.imported
   });
 });
