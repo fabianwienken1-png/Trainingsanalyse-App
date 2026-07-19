@@ -80,6 +80,22 @@ function sumLoadInWindow(dailyLoadSeries, endDate, windowDays) {
   return sum;
 }
 
+// Mindestanzahl Tage Trainingshistorie (von der ältesten importierten
+// Aktivität bis heute), bevor ACWR-Warnstufen angezeigt werden. Ohne diese
+// Schranke kann direkt nach einem Neustart/Datenverlust (z.B. leerer Store)
+// schon nach 1-2 frischen Trainings ein irreführend hoher ACWR-Alarmwert
+// erscheinen, weil die Formel dann ohne echte 28-Tage-Basis rechnet.
+const MIN_HISTORY_DAYS_FOR_ACWR = 14;
+
+function computeHistoryCoverageDays(activities, asOfDate) {
+  if (!activities.length) return 0;
+  const earliestMs = activities.reduce((min, a) => {
+    const t = new Date(a.startDate).getTime();
+    return Number.isFinite(t) && t < min ? t : min;
+  }, asOfDate.getTime());
+  return Math.max(0, Math.floor((asOfDate.getTime() - earliestMs) / DAY_MS));
+}
+
 // Acute:Chronic Workload Ratio - vergleicht die Belastung der letzten 7 Tage
 // mit dem Schnitt der letzten 28 Tage (jeweils auf 7-Tage-Basis normiert).
 // Faustregel aus der Sportwissenschaft (Gabbett et al.):
@@ -87,17 +103,22 @@ function sumLoadInWindow(dailyLoadSeries, endDate, windowDays) {
 //   0.8-1.3 -> "Sweet Spot", gute Balance
 //   1.3-1.5 -> erhöhtes Risiko, Vorsicht
 //   > 1.5   -> deutlich erhöhtes Verletzungs-/Übertrainingsrisiko
-function computeACWR(dailyLoadSeries, asOfDate) {
+// Liefert bei zu wenig Historie bewusst acwr:null/riskLevel:'unbekannt' statt
+// eines potenziell irreführenden Werts (siehe MIN_HISTORY_DAYS_FOR_ACWR oben).
+function computeACWR(dailyLoadSeries, asOfDate, hasEnoughHistory) {
   const acute7 = sumLoadInWindow(dailyLoadSeries, asOfDate, 7);
   const chronic28Total = sumLoadInWindow(dailyLoadSeries, asOfDate, 28);
   const chronicWeekly = chronic28Total / 4;
-  const acwr = chronicWeekly > 0 ? acute7 / chronicWeekly : acute7 > 0 ? 2 : null;
+  let acwr = null;
   let riskLevel = 'unbekannt';
-  if (acwr !== null) {
-    if (acwr < 0.8) riskLevel = 'niedrig (Detraining)';
-    else if (acwr <= 1.3) riskLevel = 'optimal';
-    else if (acwr <= 1.5) riskLevel = 'erhöht';
-    else riskLevel = 'hoch';
+  if (hasEnoughHistory) {
+    acwr = chronicWeekly > 0 ? acute7 / chronicWeekly : acute7 > 0 ? 2 : null;
+    if (acwr !== null) {
+      if (acwr < 0.8) riskLevel = 'niedrig (Detraining)';
+      else if (acwr <= 1.3) riskLevel = 'optimal';
+      else if (acwr <= 1.5) riskLevel = 'erhöht';
+      else riskLevel = 'hoch';
+    }
   }
   return { acute7, chronicWeekly, acwr, riskLevel };
 }
@@ -183,11 +204,38 @@ function computeSportFrequency(activities, lookbackDays = 56) {
   return { counts, total, sessionsPerWeek: perWeek };
 }
 
+// Subjektives Wohlbefinden (siehe Verbesserungs-Roadmap, Phase 4): einfacher,
+// freiwilliger Check-in (RPE 1-5 + Schlafqualität 1-5), der als zusätzlicher
+// Modifikator in die Plan-Entscheidung einfließt (siehe planner.js,
+// decideMultiplierAndReason). Bewusst nur über ein kurzes Zeitfenster
+// gemittelt (10 Tage) statt über die gesamte Historie, damit ein alter,
+// längst überwundener "schlechter" Eintrag nicht dauerhaft nachwirkt.
+const WELLBEING_LOOKBACK_DAYS = 10;
+
+function computeWellbeingSignal(entries, asOfDate, lookbackDays = WELLBEING_LOOKBACK_DAYS) {
+  const cutoff = asOfDate.getTime() - lookbackDays * DAY_MS;
+  const recent = (entries || []).filter((e) => e && e.date && new Date(e.date).getTime() >= cutoff);
+  if (recent.length === 0) {
+    return { status: 'unbekannt', avgRpe: null, avgSleepQuality: null, sampleCount: 0, lookbackDays };
+  }
+  const avgRpe = round1(recent.reduce((sum, e) => sum + e.rpe, 0) / recent.length);
+  const avgSleepQuality = round1(recent.reduce((sum, e) => sum + e.sleepQuality, 0) / recent.length);
+  // Grobe Einordnung: "belastet" schlägt an, sobald EINER der beiden Werte
+  // auffällig ist (hohe wahrgenommene Anstrengung ODER schlechter Schlaf reicht
+  // schon als Warnsignal) - "gut" braucht dagegen BEIDE Werte im grünen Bereich.
+  let status = 'neutral';
+  if (avgRpe >= 4 || avgSleepQuality <= 2) status = 'belastet';
+  else if (avgRpe <= 2 && avgSleepQuality >= 4) status = 'gut';
+  return { status, avgRpe, avgSleepQuality, sampleCount: recent.length, lookbackDays };
+}
+
 // Baut den vollständigen Analyse-Report für das Dashboard.
 function buildAnalysisReport(activities, athlete) {
   const dailyLoadSeries = computeDailyLoadSeries(activities, athlete);
   const now = new Date();
-  const acwr = computeACWR(dailyLoadSeries, now);
+  const coverageDays = computeHistoryCoverageDays(activities, now);
+  const hasEnoughHistory = coverageDays >= MIN_HISTORY_DAYS_FOR_ACWR;
+  const acwr = computeACWR(dailyLoadSeries, now, hasEnoughHistory);
   const monotonyStrain = computeMonotonyStrain(dailyLoadSeries, now);
   const thisWeekStart = startOfWeek(now);
   const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * DAY_MS);
@@ -203,7 +251,12 @@ function buildAnalysisReport(activities, athlete) {
   }
 
   const flags = [];
-  if (acwr.acwr !== null && acwr.acwr > 1.5) {
+  if (!hasEnoughHistory) {
+    flags.push({
+      level: 'hinweis',
+      message: `Noch zu wenig Trainingshistorie (${coverageDays} von ${MIN_HISTORY_DAYS_FOR_ACWR} Tagen) für eine verlässliche Belastungseinschätzung (ACWR). Läuft automatisch an, sobald genug Daten vorliegen.`
+    });
+  } else if (acwr.acwr !== null && acwr.acwr > 1.5) {
     flags.push({
       level: 'warnung',
       message: 'ACWR > 1.5: Belastung ist stark angestiegen. Erhöhtes Verletzungsrisiko – nächste Tage eher lockerer angehen.'
@@ -228,6 +281,8 @@ function buildAnalysisReport(activities, athlete) {
 
   return {
     generatedAt: now.toISOString(),
+    coverageDays,
+    hasEnoughHistory,
     acwr,
     monotonyStrain,
     thisWeek,
@@ -243,9 +298,13 @@ module.exports = {
   computeActivityLoad,
   computeDailyLoadSeries,
   computeACWR,
+  computeHistoryCoverageDays,
   computeMonotonyStrain,
   computeWeeklySummary,
   computeSportFrequency,
+  computeWellbeingSignal,
   buildAnalysisReport,
-  startOfWeek
+  startOfWeek,
+  MIN_HISTORY_DAYS_FOR_ACWR,
+  WELLBEING_LOOKBACK_DAYS
 };

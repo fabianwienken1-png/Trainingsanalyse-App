@@ -66,6 +66,13 @@ function defaultStore() {
       weekIndex: 0, // fortlaufender Zähler, u.a. für Deload-Erkennung
       sessions: [], // aktuelle Wochen-Sessions
       history: [] // abgeschlossene Wochen inkl. Auswertung
+    },
+    // Subjektiver Wohlbefinden-Check (siehe Verbesserungs-Roadmap, Phase 4):
+    // einfache, freiwillige Einträge (RPE + Schlafqualität), die als rein
+    // dämpfender Modifikator in die Plan-Generierung einfließen (siehe
+    // analysis.js computeWellbeingSignal / planner.js decideMultiplierAndReason).
+    wellbeing: {
+      entries: [] // { id, date (ISO), rpe (1-5), sleepQuality (1-5), note }
     }
   };
 }

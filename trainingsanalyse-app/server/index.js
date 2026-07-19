@@ -106,7 +106,7 @@ function getBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
-function serveStatic(req, res, pathname) {
+function serveStatic(req, res, pathname, headOnly) {
   let filePath = pathname === '/' ? '/index.html' : pathname;
   const fullPath = path.normalize(path.join(PUBLIC_DIR, filePath));
   if (!fullPath.startsWith(PUBLIC_DIR)) {
@@ -119,8 +119,22 @@ function serveStatic(req, res, pathname) {
       return;
     }
     const ext = path.extname(fullPath);
-    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
-    res.end(content);
+    const headers = {
+      'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+      'Content-Length': content.length
+    };
+    // HTML/JS/CSS/Manifest ohne HTTP-Cache ausliefern: die App hat keine
+    // Cache-Busting-Dateinamen (z.B. app.abc123.js), daher würde ein vom
+    // Browser gecachtes index.html/app.js nach einem Deploy sonst erst nach
+    // einem harten Reload aktualisiert werden (siehe Verwirrung beim
+    // Phase-2-Rollout - der Deploy war korrekt, nur der Browser zeigte noch
+    // die alte Version). Bilder/Icons ändern sich praktisch nie und dürfen
+    // normal gecacht werden.
+    if (['.html', '.js', '.css', '.webmanifest', '.json'].includes(ext)) {
+      headers['Cache-Control'] = 'no-cache, must-revalidate';
+    }
+    res.writeHead(200, headers);
+    res.end(headOnly ? undefined : content);
   });
 }
 
@@ -163,6 +177,7 @@ function matchRoute(method, pathname) {
 route('GET', '/api/state', async (req, res) => {
   const s = await loadStore();
   const report = analysis.buildAnalysisReport(s.activities, s.athlete);
+  const wellbeingSignal = analysis.computeWellbeingSignal(s.wellbeing.entries, new Date());
   sendJson(res, 200, {
     athlete: s.athlete,
     strava: {
@@ -178,8 +193,162 @@ route('GET', '/api/state', async (req, res) => {
     },
     recentActivities: s.activities.slice(0, 20),
     plan: s.plan,
-    analysis: report
+    analysis: report,
+    wellbeing: {
+      entries: s.wellbeing.entries.slice(0, 5),
+      signal: wellbeingSignal
+    }
   });
+});
+
+// Subjektiver Wohlbefinden-Check (siehe Verbesserungs-Roadmap, Phase 4) -
+// freiwilliger Eintrag (RPE + Schlafqualität), der über computeWellbeingSignal
+// (analysis.js) rein dämpfend in die nächste Plan-Generierung einfließt
+// (siehe planner.js, decideMultiplierAndReason).
+route('POST', '/api/wellbeing', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const rpe = Number(body.rpe);
+  const sleepQuality = Number(body.sleepQuality);
+  if (!Number.isInteger(rpe) || rpe < 1 || rpe > 5) {
+    return sendError(res, 400, 'Feld "rpe" muss eine ganze Zahl zwischen 1 und 5 sein.');
+  }
+  if (!Number.isInteger(sleepQuality) || sleepQuality < 1 || sleepQuality > 5) {
+    return sendError(res, 400, 'Feld "sleepQuality" muss eine ganze Zahl zwischen 1 und 5 sein.');
+  }
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : null;
+
+  const s = await loadStore();
+  const entry = {
+    id: `wb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    date: new Date().toISOString(),
+    rpe,
+    sleepQuality,
+    note: note || null
+  };
+  s.wellbeing.entries.unshift(entry);
+  // ~2 Jahre Historie bei wöchentlichen Einträgen reichen völlig - deckelt
+  // das Wachstum des Stores, ohne die Auswertung (10-Tage-Fenster) zu beeinflussen.
+  s.wellbeing.entries = s.wellbeing.entries.slice(0, 104);
+  await saveStore(s);
+  sendJson(res, 201, { entry });
+});
+
+// Löscht einen einzelnen Wohlbefinden-Eintrag (z.B. Fehleingabe korrigieren).
+route('DELETE', '/api/wellbeing', async (req, res, urlObj) => {
+  const id = urlObj.searchParams.get('id');
+  if (!id) {
+    return sendError(res, 400, 'Fehlender Parameter "id".');
+  }
+  const s = await loadStore();
+  const idx = s.wellbeing.entries.findIndex((e) => e.id === id);
+  if (idx === -1) {
+    return sendError(res, 404, 'Eintrag nicht gefunden (evtl. schon gelöscht).');
+  }
+  const [removed] = s.wellbeing.entries.splice(idx, 1);
+  await saveStore(s);
+  sendJson(res, 200, { deleted: true, entry: removed });
+});
+
+// Backup-Export: kompletter Store als JSON-Datei zum Download, unabhängig von
+// Supabase/Render (siehe Verbesserungs-Roadmap, Phase 2) - so hat der Nutzer
+// jederzeit eine eigene Kopie seiner Trainingsdaten/Einstellungen, falls z.B.
+// mal die Datenbank-Anbindung Probleme macht. OAuth-Zugangsdaten (Strava-Tokens,
+// Health-Import-Token) werden bewusst NICHT mit exportiert - das Backup soll
+// die Trainingsdaten sichern, keine Secrets weitergeben.
+route('GET', '/api/backup', async (req, res) => {
+  const s = await loadStore();
+  const exportData = JSON.parse(JSON.stringify(s));
+  if (exportData.strava) {
+    exportData.strava.accessToken = null;
+    exportData.strava.refreshToken = null;
+  }
+  if (exportData.appleHealth) {
+    exportData.appleHealth.importToken = null;
+  }
+  const filename = `trainingsanalyse-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const body = JSON.stringify(exportData, null, 2);
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Content-Length': Buffer.byteLength(body)
+  });
+  res.end(body);
+});
+
+// Liefert Aktivitäten mit optionalen Filtern (Suche/Sportart) für die
+// Aktivitätentabelle im Frontend (siehe Verbesserungs-Roadmap, Phase 3).
+// Eigener Endpoint statt Erweiterung von /api/state, da /api/state bewusst nur
+// die letzten 20 für die Kurzübersicht liefert (?q= durchsucht Name/Sportart,
+// ?sport= filtert exakt, ?limit= deckelt die Ergebnisliste).
+route('GET', '/api/activities', async (req, res, urlObj) => {
+  const s = await loadStore();
+  const q = (urlObj.searchParams.get('q') || '').trim().toLowerCase();
+  const sport = urlObj.searchParams.get('sport') || '';
+  const limit = Math.min(500, Math.max(1, Number(urlObj.searchParams.get('limit')) || 200));
+  let list = s.activities;
+  if (sport) {
+    list = list.filter((a) => a.type === sport);
+  }
+  if (q) {
+    list = list.filter(
+      (a) => (a.name || '').toLowerCase().includes(q) || (a.type || '').toLowerCase().includes(q)
+    );
+  }
+  sendJson(res, 200, { activities: list.slice(0, limit), total: list.length });
+});
+
+// Legt eine manuell erfasste Aktivität an (siehe health-import.js,
+// normalizeManualActivity) - für Einheiten, die Health/Strava nicht sauber
+// erfasst haben (z.B. Studio-Kurs ohne Uhr am Handgelenk).
+route('POST', '/api/activities', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const validation = healthImport.validateManualActivity(body);
+  if (!validation.ok) {
+    return sendError(res, 400, validation.error);
+  }
+  const s = await loadStore();
+  const normalized = healthImport.normalizeManualActivity(body);
+  healthImport.mergeHealthActivity(s, normalized);
+  await saveStore(s);
+  sendJson(res, 201, { activity: normalized });
+});
+
+// Setzt den Status einer einzelnen Plan-Session der laufenden Woche manuell
+// (erledigt/übersprungen/zurücksetzen auf geplant) - unabhängig von der
+// automatischen ±1-Tag-Erkennung beim nächsten Wochenwechsel (siehe
+// planner.js, evaluatePreviousWeek). Das gesetzte "manualOverride"-Flag sorgt
+// dafür, dass die Entscheidung beim nächsten "Neue Woche planen" nicht wieder
+// von der Automatik überschrieben wird.
+route('POST', '/api/plan/session-status', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const { sessionId, status } = body || {};
+  if (!sessionId || !['planned', 'done', 'missed'].includes(status)) {
+    return sendError(res, 400, 'Felder "sessionId" und "status" (planned|done|missed) sind erforderlich.');
+  }
+  const s = await loadStore();
+  const session = (s.plan.sessions || []).find((sess) => sess.id === sessionId);
+  if (!session) {
+    return sendError(res, 404, 'Session nicht gefunden (evtl. wurde inzwischen eine neue Woche geplant).');
+  }
+  session.status = status;
+  session.manualOverride = status !== 'planned';
+  await saveStore(s);
+  sendJson(res, 200, { plan: s.plan });
 });
 
 // Löscht eine einzelne Aktivität (z.B. Test-Trainings, die man in Health/Strava
@@ -261,6 +430,14 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
   if (result.imported.length > 0) {
     s.appleHealth.lastImportAt = new Date().toISOString();
     s.appleHealth.importCount = (s.appleHealth.importCount || 0) + result.imported.length;
+  }
+
+  // Ruhepuls/Maximalpuls automatisch übernehmen, falls in den Einstellungen
+  // noch leer (siehe deriveAthleteDefaults in health-auto-export.js) - macht
+  // die Trainingslast-Berechnung ab dem nächsten Sync spürbar genauer.
+  const athleteDefaults = healthAutoExport.deriveAthleteDefaults(s, body);
+
+  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0) {
     await saveStore(s);
   }
 
@@ -270,12 +447,16 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
   if (result.totalWorkouts > 0 && result.imported.length === 0) {
     console.log('[health-auto-export] Keines der Workouts konnte geparst werden. Felder des ersten Eintrags:', result.skipped[0]);
   }
+  if (Object.keys(athleteDefaults).length > 0) {
+    console.log('[health-auto-export] Athlet-Einstellungen automatisch abgeleitet:', athleteDefaults);
+  }
 
   sendJson(res, 200, {
     received: true,
     totalWorkouts: result.totalWorkouts,
     imported: result.imported.length,
     skipped: result.skipped.length,
+    athleteDefaultsSet: athleteDefaults,
     activities: result.imported
   });
 });
@@ -452,18 +633,36 @@ route('GET', '/api/health', async (req, res) => {
 // ---------- Server ----------
 
 const server = http.createServer(async (req, res) => {
+  // CORS: erlaubt Aufrufe von außerhalb der eigenen App-Origin (z.B. eine lokal
+  // geöffnete HTML-Datei für einmalige Skripte/Backfill-Importe). Single-User-App
+  // mit Token-Auth auf den sensiblen Routen - ein offener Access-Control-Allow-Origin
+  // ist hier unkritisch. Ohne das blockiert der Browser (v.a. Safari) den Zugriff
+  // von file://-Seiten mit "Load failed", noch bevor die Anfrage den Server erreicht.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   try {
     const urlObj = new URL(req.url, `http://${req.headers.host}`);
     const pathname = urlObj.pathname;
 
-    const matched = matchRoute(req.method, pathname);
+    // HEAD wie GET behandeln (u.a. für Uptime-Monitore wie UptimeRobot, die
+    // standardmäßig HEAD statt GET schicken, um Bandbreite zu sparen) - ohne
+    // das würde jeder Wach-halt-Ping fälschlich als 404 gewertet.
+    const routeMethod = req.method === 'HEAD' ? 'GET' : req.method;
+
+    const matched = matchRoute(routeMethod, pathname);
     if (matched) {
       await matched.handler(req, res, urlObj);
       return;
     }
 
-    if (req.method === 'GET') {
-      serveStatic(req, res, pathname);
+    if (routeMethod === 'GET') {
+      serveStatic(req, res, pathname, req.method === 'HEAD');
       return;
     }
 

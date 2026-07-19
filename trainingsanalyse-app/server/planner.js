@@ -105,6 +105,11 @@ function evaluatePreviousWeek(store) {
 
   const weekStart = new Date(plan.currentWeekStart + 'T00:00:00Z');
   const evaluated = plan.sessions.map((session) => {
+    // Manuell gesetzter Status (siehe POST /api/plan/session-status) hat
+    // Vorrang vor der automatischen ±1-Tag-Erkennung - der Nutzer weiß es
+    // besser als die Heuristik (z.B. Einheit ohne Tracking absolviert, oder
+    // bewusst als "übersprungen" markiert statt fälschlich "erledigt").
+    if (session.manualOverride) return session;
     const sessionDate = new Date(session.day + 'T00:00:00Z');
     const match = activities.find((act) => {
       const actDate = new Date(act.startDate);
@@ -136,19 +141,36 @@ function decideMultiplierAndReason(store, weekIndex, acwr, completionRate) {
   const cap = store.athlete.weeklyIncreaseCap ?? 0.1;
   const deloadEvery = store.athlete.deloadEveryNWeeks ?? 4;
 
+  let decision;
   if (weekIndex > 0 && weekIndex % deloadEvery === 0) {
-    return { multiplier: 0.6, reason: `Deload-Woche (jede ${deloadEvery}. Woche) – bewusste Erholungswoche zur Regeneration.` };
+    decision = { multiplier: 0.6, reason: `Deload-Woche (jede ${deloadEvery}. Woche) – bewusste Erholungswoche zur Regeneration.` };
+  } else if (acwr.acwr !== null && acwr.acwr > 1.5) {
+    decision = { multiplier: 0.75, reason: 'ACWR war zuletzt hoch (>1.5) – Belastung wird reduziert, um Verletzungsrisiko zu senken.' };
+  } else if (acwr.acwr !== null && acwr.acwr > 1.3) {
+    decision = { multiplier: 0.95, reason: 'ACWR leicht erhöht – Belastung wird gehalten statt weiter gesteigert.' };
+  } else if (completionRate !== null && completionRate < 70) {
+    decision = { multiplier: 1.0, reason: `Nur ${completionRate}% der letzten Woche geplanten Einheiten absolviert – Zielbelastung bleibt konstant statt zu steigen.` };
+  } else {
+    decision = { multiplier: 1 + cap, reason: `Normale Progression: +${Math.round(cap * 100)}% gegenüber Vorwoche.` };
   }
-  if (acwr.acwr !== null && acwr.acwr > 1.5) {
-    return { multiplier: 0.75, reason: 'ACWR war zuletzt hoch (>1.5) – Belastung wird reduziert, um Verletzungsrisiko zu senken.' };
+
+  // Subjektives Wohlbefinden (siehe Verbesserungs-Roadmap, Phase 4) als
+  // zusätzlicher, bewusst rein dämpfender Modifikator: er kann eine geplante
+  // Progression zusätzlich abschwächen, sie aber nie über den regulären Cap
+  // hinaus verstärken - im Zweifel lieber vorsichtiger planen als forcieren.
+  const wellbeing = analysis.computeWellbeingSignal(store.wellbeing.entries, new Date());
+  if (wellbeing.status === 'belastet') {
+    decision = {
+      multiplier: round1(decision.multiplier * 0.9),
+      reason:
+        `${decision.reason} Zusätzlich gedämpft: dein Wohlbefinden-Check zeigt erhöhte Erschöpfung ` +
+        `(Ø RPE ${wellbeing.avgRpe}/5, Ø Schlafqualität ${wellbeing.avgSleepQuality}/5 aus ` +
+        `${wellbeing.sampleCount} Eintrag/Einträgen der letzten ${wellbeing.lookbackDays} Tage) – ` +
+        `Belastung wird zusätzlich reduziert.`
+    };
   }
-  if (acwr.acwr !== null && acwr.acwr > 1.3) {
-    return { multiplier: 0.95, reason: 'ACWR leicht erhöht – Belastung wird gehalten statt weiter gesteigert.' };
-  }
-  if (completionRate !== null && completionRate < 70) {
-    return { multiplier: 1.0, reason: `Nur ${completionRate}% der letzten Woche geplanten Einheiten absolviert – Zielbelastung bleibt konstant statt zu steigen.` };
-  }
-  return { multiplier: 1 + cap, reason: `Normale Progression: +${Math.round(cap * 100)}% gegenüber Vorwoche.` };
+
+  return { ...decision, wellbeing };
 }
 
 // Verteilt die Ziel-Gesamtlast auf konkrete Sessions über die Woche.
@@ -248,7 +270,7 @@ function generateNextWeekPlan(store) {
   const completionRate = evalResult ? evalResult.completionRate : null;
 
   const baseLoad = computeBaseTargetLoad(store, evalResult ? evalResult.summary : report.lastWeek);
-  const { multiplier, reason } = decideMultiplierAndReason(store, weekIndex, report.acwr, completionRate);
+  const { multiplier, reason, wellbeing } = decideMultiplierAndReason(store, weekIndex, report.acwr, completionRate);
   const targetTotalLoad = round1(baseLoad * multiplier);
 
   const today = new Date();
@@ -266,7 +288,8 @@ function generateNextWeekPlan(store) {
     isDeload,
     reason,
     acwr: report.acwr,
-    completionRate
+    completionRate,
+    wellbeing
   };
 
   return store.plan;
