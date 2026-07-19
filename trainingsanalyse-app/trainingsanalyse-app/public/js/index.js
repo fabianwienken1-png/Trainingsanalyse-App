@@ -2,6 +2,7 @@
 // Bewusst mit reinem Node.js (http-Modul) umgesetzt, ganz ohne externe
 // Abhängigkeiten (kein Express nötig) – dadurch läuft "npm install" in
 // Sekunden bzw. wird gar nicht gebraucht, was das Deployment vereinfacht.
+// (Auch der Supabase-Zugriff in store.js nutzt nur das eingebaute `fetch`.)
 
 const http = require('http');
 const fs = require('fs');
@@ -28,14 +29,20 @@ const healthAutoExport = require('./health-auto-export');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
-// In-Memory State (wird bei jedem Request frisch von Disk geladen, um bei
-// Restarts/mehreren Prozessen konsistent zu bleiben - bei der erwarteten
-// Last einer Single-User-App ist das performant genug).
-function loadStore() {
+console.log(
+  store.REMOTE_MODE
+    ? 'Datenspeicher: Supabase (persistent über Deploys/Ruhephasen hinweg).'
+    : 'Datenspeicher: lokale Datei data/store.json (WARNUNG: auf Render Free Tier nicht persistent - siehe INSTALLATION.md, Supabase-Setup empfohlen).'
+);
+
+// Store wird bei jedem Request frisch geladen (asynchron - siehe store.js), um bei
+// Restarts/mehreren Prozessen konsistent zu bleiben - bei der erwarteten Last einer
+// Single-User-App ist das performant genug.
+async function loadStore() {
   return store.load();
 }
-function saveStore(s) {
-  store.save(s);
+async function saveStore(s) {
+  return store.save(s);
 }
 
 // Kurzlebiger State-Wert für den OAuth-CSRF-Schutz (kein Cookie nötig, da Single-User)
@@ -99,7 +106,7 @@ function getBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
-function serveStatic(req, res, pathname) {
+function serveStatic(req, res, pathname, headOnly) {
   let filePath = pathname === '/' ? '/index.html' : pathname;
   const fullPath = path.normalize(path.join(PUBLIC_DIR, filePath));
   if (!fullPath.startsWith(PUBLIC_DIR)) {
@@ -112,8 +119,11 @@ function serveStatic(req, res, pathname) {
       return;
     }
     const ext = path.extname(fullPath);
-    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
-    res.end(content);
+    res.writeHead(200, {
+      'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+      'Content-Length': content.length
+    });
+    res.end(headOnly ? undefined : content);
   });
 }
 
@@ -134,7 +144,7 @@ async function handleSync(currentStore, sinceDays) {
   const raw = await strava.fetchActivitiesSince(currentStore, saveStore, afterEpoch);
   mergeActivities(currentStore, raw);
   currentStore.strava.lastSyncAt = new Date().toISOString();
-  saveStore(currentStore);
+  await saveStore(currentStore);
   return raw.length;
 }
 
@@ -154,7 +164,7 @@ function matchRoute(method, pathname) {
 // ---------- API-Routen ----------
 
 route('GET', '/api/state', async (req, res) => {
-  const s = loadStore();
+  const s = await loadStore();
   const report = analysis.buildAnalysisReport(s.activities, s.athlete);
   sendJson(res, 200, {
     athlete: s.athlete,
@@ -175,6 +185,32 @@ route('GET', '/api/state', async (req, res) => {
   });
 });
 
+// Backup-Export: kompletter Store als JSON-Datei zum Download, unabhängig von
+// Supabase/Render (siehe Verbesserungs-Roadmap, Phase 2) - so hat der Nutzer
+// jederzeit eine eigene Kopie seiner Trainingsdaten/Einstellungen, falls z.B.
+// mal die Datenbank-Anbindung Probleme macht. OAuth-Zugangsdaten (Strava-Tokens,
+// Health-Import-Token) werden bewusst NICHT mit exportiert - das Backup soll
+// die Trainingsdaten sichern, keine Secrets weitergeben.
+route('GET', '/api/backup', async (req, res) => {
+  const s = await loadStore();
+  const exportData = JSON.parse(JSON.stringify(s));
+  if (exportData.strava) {
+    exportData.strava.accessToken = null;
+    exportData.strava.refreshToken = null;
+  }
+  if (exportData.appleHealth) {
+    exportData.appleHealth.importToken = null;
+  }
+  const filename = `trainingsanalyse-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const body = JSON.stringify(exportData, null, 2);
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Content-Length': Buffer.byteLength(body)
+  });
+  res.end(body);
+});
+
 // Löscht eine einzelne Aktivität (z.B. Test-Trainings, die man in Health/Strava
 // zwar entfernt hat, die aber - da unser Import rein additiv ist, siehe
 // health-import.js/health-auto-export.js - sonst für immer in der App
@@ -185,13 +221,13 @@ route('DELETE', '/api/activities', async (req, res, urlObj) => {
   if (!id) {
     return sendError(res, 400, 'Fehlender Parameter "id".');
   }
-  const s = loadStore();
+  const s = await loadStore();
   const idx = s.activities.findIndex((a) => a.id === id);
   if (idx === -1) {
     return sendError(res, 404, 'Aktivität nicht gefunden (evtl. schon gelöscht).');
   }
   const [removed] = s.activities.splice(idx, 1);
-  saveStore(s);
+  await saveStore(s);
   sendJson(res, 200, { deleted: true, activity: removed });
 });
 
@@ -199,7 +235,7 @@ route('DELETE', '/api/activities', async (req, res, urlObj) => {
 // Auth über einen einfachen geteilten Token (kein OAuth nötig, da Single-User-App):
 // entweder als ?token=... in der URL oder als "Authorization: Bearer ..."-Header.
 route('POST', '/api/import/health', async (req, res, urlObj) => {
-  const s = loadStore();
+  const s = await loadStore();
   const headerToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   const providedToken = urlObj.searchParams.get('token') || headerToken;
 
@@ -223,7 +259,7 @@ route('POST', '/api/import/health', async (req, res, urlObj) => {
   healthImport.mergeHealthActivity(s, normalized);
   s.appleHealth.lastImportAt = new Date().toISOString();
   s.appleHealth.importCount = (s.appleHealth.importCount || 0) + 1;
-  saveStore(s);
+  await saveStore(s);
 
   sendJson(res, 200, { received: true, activity: normalized });
 });
@@ -234,7 +270,7 @@ route('POST', '/api/import/health', async (req, res, urlObj) => {
 // dem letzten Export) - die werden dann alle in einem Rutsch verarbeitet.
 // Gleicher Token wie /api/import/health, damit nur ein Secret verwaltet werden muss.
 route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
-  const s = loadStore();
+  const s = await loadStore();
   const headerToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   const providedToken = urlObj.searchParams.get('token') || headerToken;
 
@@ -254,7 +290,15 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
   if (result.imported.length > 0) {
     s.appleHealth.lastImportAt = new Date().toISOString();
     s.appleHealth.importCount = (s.appleHealth.importCount || 0) + result.imported.length;
-    saveStore(s);
+  }
+
+  // Ruhepuls/Maximalpuls automatisch übernehmen, falls in den Einstellungen
+  // noch leer (siehe deriveAthleteDefaults in health-auto-export.js) - macht
+  // die Trainingslast-Berechnung ab dem nächsten Sync spürbar genauer.
+  const athleteDefaults = healthAutoExport.deriveAthleteDefaults(s, body);
+
+  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0) {
+    await saveStore(s);
   }
 
   console.log(
@@ -263,28 +307,35 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
   if (result.totalWorkouts > 0 && result.imported.length === 0) {
     console.log('[health-auto-export] Keines der Workouts konnte geparst werden. Felder des ersten Eintrags:', result.skipped[0]);
   }
+  if (Object.keys(athleteDefaults).length > 0) {
+    console.log('[health-auto-export] Athlet-Einstellungen automatisch abgeleitet:', athleteDefaults);
+  }
 
   sendJson(res, 200, {
     received: true,
     totalWorkouts: result.totalWorkouts,
     imported: result.imported.length,
     skipped: result.skipped.length,
+    athleteDefaultsSet: athleteDefaults,
     activities: result.imported
   });
 });
 
 // Erzeugt einen neuen Import-Token (macht den alten ungültig) - z.B. falls der
 // Token versehentlich geteilt wurde oder du den Kurzbefehl neu einrichtest.
+// Hinweis: Ist APPLE_HEALTH_IMPORT_TOKEN als Umgebungsvariable gesetzt, überschreibt
+// store.load() diesen Wert beim nächsten Request wieder mit dem Env-Var-Wert - die
+// Rotation hier ist dann nur sinnvoll, wenn man die Env-Var gleichzeitig mit ändert.
 route('POST', '/api/import/health/rotate-token', async (req, res) => {
-  const s = loadStore();
+  const s = await loadStore();
   s.appleHealth.importToken = crypto.randomBytes(20).toString('hex');
-  saveStore(s);
+  await saveStore(s);
   sendJson(res, 200, { importToken: s.appleHealth.importToken });
 });
 
 route('POST', '/api/settings', async (req, res) => {
   const body = await parseJsonBody(req);
-  const s = loadStore();
+  const s = await loadStore();
   const allowed = [
     'name',
     'maxHR',
@@ -299,7 +350,7 @@ route('POST', '/api/settings', async (req, res) => {
       s.athlete[key] = body[key];
     }
   }
-  saveStore(s);
+  await saveStore(s);
   sendJson(res, 200, { athlete: s.athlete });
 });
 
@@ -331,13 +382,13 @@ route('GET', '/auth/strava/callback', async (req, res, urlObj) => {
   pendingOAuthState = null;
   try {
     const tokenData = await strava.exchangeCodeForToken(code);
-    const s = loadStore();
+    const s = await loadStore();
     s.strava.connected = true;
     s.strava.athleteId = tokenData.athlete ? tokenData.athlete.id : null;
     s.strava.accessToken = tokenData.access_token;
     s.strava.refreshToken = tokenData.refresh_token;
     s.strava.expiresAt = tokenData.expires_at;
-    saveStore(s);
+    await saveStore(s);
     // Direkt einen initialen Sync der letzten 90 Tage anstoßen
     try {
       await handleSync(s, 90);
@@ -354,7 +405,7 @@ route('GET', '/auth/strava/callback', async (req, res, urlObj) => {
 });
 
 route('POST', '/api/sync', async (req, res) => {
-  const s = loadStore();
+  const s = await loadStore();
   if (!s.strava.connected) {
     return sendError(res, 400, 'Strava ist nicht verbunden.');
   }
@@ -367,9 +418,9 @@ route('POST', '/api/sync', async (req, res) => {
 });
 
 route('POST', '/api/plan/regenerate', async (req, res) => {
-  const s = loadStore();
+  const s = await loadStore();
   const plan = planner.generateNextWeekPlan(s);
-  saveStore(s);
+  await saveStore(s);
   sendJson(res, 200, { plan });
 });
 
@@ -383,15 +434,15 @@ route('POST', '/api/webhook/setup', async (req, res) => {
   try {
     const existing = await strava.listWebhookSubscriptions();
     if (existing && existing.length > 0) {
-      const s = loadStore();
+      const s = await loadStore();
       s.strava.webhookSubscriptionId = existing[0].id;
-      saveStore(s);
+      await saveStore(s);
       return sendJson(res, 200, { subscription: existing[0], note: 'Es existierte bereits eine Subscription.' });
     }
     const sub = await strava.createWebhookSubscription(callbackUrl, verifyToken);
-    const s = loadStore();
+    const s = await loadStore();
     s.strava.webhookSubscriptionId = sub.id;
-    saveStore(s);
+    await saveStore(s);
     sendJson(res, 200, { subscription: sub });
   } catch (err) {
     sendError(res, 500, err.message);
@@ -424,11 +475,11 @@ route('POST', '/webhook', async (req, res) => {
   if (body.aspect_type !== 'create' && body.aspect_type !== 'update') return;
 
   try {
-    const s = loadStore();
+    const s = await loadStore();
     if (!s.strava.connected) return;
     const detail = await strava.fetchActivityDetail(s, saveStore, body.object_id);
     mergeActivities(s, [detail]);
-    saveStore(s);
+    await saveStore(s);
     console.log(`Webhook: Aktivität ${body.object_id} importiert (${detail.name}).`);
   } catch (err) {
     console.error('Webhook-Verarbeitung fehlgeschlagen:', err.message);
@@ -442,18 +493,36 @@ route('GET', '/api/health', async (req, res) => {
 // ---------- Server ----------
 
 const server = http.createServer(async (req, res) => {
+  // CORS: erlaubt Aufrufe von außerhalb der eigenen App-Origin (z.B. eine lokal
+  // geöffnete HTML-Datei für einmalige Skripte/Backfill-Importe). Single-User-App
+  // mit Token-Auth auf den sensiblen Routen - ein offener Access-Control-Allow-Origin
+  // ist hier unkritisch. Ohne das blockiert der Browser (v.a. Safari) den Zugriff
+  // von file://-Seiten mit "Load failed", noch bevor die Anfrage den Server erreicht.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   try {
     const urlObj = new URL(req.url, `http://${req.headers.host}`);
     const pathname = urlObj.pathname;
 
-    const matched = matchRoute(req.method, pathname);
+    // HEAD wie GET behandeln (u.a. für Uptime-Monitore wie UptimeRobot, die
+    // standardmäßig HEAD statt GET schicken, um Bandbreite zu sparen) - ohne
+    // das würde jeder Wach-halt-Ping fälschlich als 404 gewertet.
+    const routeMethod = req.method === 'HEAD' ? 'GET' : req.method;
+
+    const matched = matchRoute(routeMethod, pathname);
     if (matched) {
       await matched.handler(req, res, urlObj);
       return;
     }
 
-    if (req.method === 'GET') {
-      serveStatic(req, res, pathname);
+    if (routeMethod === 'GET') {
+      serveStatic(req, res, pathname, req.method === 'HEAD');
       return;
     }
 
