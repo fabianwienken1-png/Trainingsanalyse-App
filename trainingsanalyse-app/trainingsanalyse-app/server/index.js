@@ -185,6 +185,32 @@ route('GET', '/api/state', async (req, res) => {
   });
 });
 
+// Backup-Export: kompletter Store als JSON-Datei zum Download, unabhängig von
+// Supabase/Render (siehe Verbesserungs-Roadmap, Phase 2) - so hat der Nutzer
+// jederzeit eine eigene Kopie seiner Trainingsdaten/Einstellungen, falls z.B.
+// mal die Datenbank-Anbindung Probleme macht. OAuth-Zugangsdaten (Strava-Tokens,
+// Health-Import-Token) werden bewusst NICHT mit exportiert - das Backup soll
+// die Trainingsdaten sichern, keine Secrets weitergeben.
+route('GET', '/api/backup', async (req, res) => {
+  const s = await loadStore();
+  const exportData = JSON.parse(JSON.stringify(s));
+  if (exportData.strava) {
+    exportData.strava.accessToken = null;
+    exportData.strava.refreshToken = null;
+  }
+  if (exportData.appleHealth) {
+    exportData.appleHealth.importToken = null;
+  }
+  const filename = `trainingsanalyse-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const body = JSON.stringify(exportData, null, 2);
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Content-Length': Buffer.byteLength(body)
+  });
+  res.end(body);
+});
+
 // Löscht eine einzelne Aktivität (z.B. Test-Trainings, die man in Health/Strava
 // zwar entfernt hat, die aber - da unser Import rein additiv ist, siehe
 // health-import.js/health-auto-export.js - sonst für immer in der App
