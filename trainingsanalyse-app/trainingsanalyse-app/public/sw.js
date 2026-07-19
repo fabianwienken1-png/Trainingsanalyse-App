@@ -1,8 +1,13 @@
-// Minimaler Service Worker: cached die App-Shell für schnelle Ladezeiten und
-// Offline-Start (Datenabrufe über /api/* laufen bewusst immer live, kein
-// Offline-Caching von Trainingsdaten, damit nie veraltete Werte angezeigt werden).
-
-const CACHE_NAME = 'trainingsanalyse-shell-v1';
+// Minimaler Service Worker: cached die App-Shell als Offline-Fallback.
+// WICHTIG: "Network-first" statt "Cache-first" - wir versuchen immer zuerst,
+// die aktuelle Version vom Server zu laden, und greifen nur bei fehlender
+// Verbindung auf den zwischengespeicherten Stand zurück. So sieht man nach
+// einem Deploy sofort die neue Version, statt an einer veralteten Cache-Kopie
+// hängen zu bleiben (Datenabrufe über /api/* etc. werden ohnehin nie gecacht).
+//
+// CACHE_NAME wird bei jedem Update dieser Datei erhöht - das sorgt zusätzlich
+// dafür, dass activate() den alten Cache zuverlässig verwirft.
+const CACHE_NAME = 'trainingsanalyse-shell-v3';
 const SHELL_FILES = [
   '/',
   '/css/style.css',
@@ -35,6 +40,12 @@ self.addEventListener('fetch', (event) => {
     return; // niemals cachen - immer live vom Server
   }
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
+        return response;
+      })
+      .catch(() => caches.match(event.request)) // nur bei Netzwerkfehler auf Cache zurückfallen
   );
 });
