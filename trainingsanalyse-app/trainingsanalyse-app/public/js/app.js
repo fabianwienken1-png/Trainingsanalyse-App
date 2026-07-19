@@ -98,6 +98,16 @@ function renderStravaStatus(state) {
   }
 }
 
+// Ab wie vielen Tagen ohne neuen Import wir den Nutzer warnen (siehe
+// Verbesserungs-Roadmap, Phase 2) - soll frühzeitig auf einen erneut
+// ausgefallenen Sync hinweisen, statt dass es erst Wochen später aus einer
+// veralteten Analyse auffällt.
+const SYNC_STALE_DAYS = 3;
+
+function daysSince(isoString) {
+  return (Date.now() - new Date(isoString).getTime()) / (24 * 60 * 60 * 1000);
+}
+
 function renderHealthImportStatus(state) {
   const box = document.getElementById('health-import-status');
   box.innerHTML = '';
@@ -107,6 +117,16 @@ function renderHealthImportStatus(state) {
   const lastImport = hc.lastImportAt
     ? new Date(hc.lastImportAt).toLocaleString('de-DE')
     : 'noch kein Import';
+
+  if (hc.lastImportAt && daysSince(hc.lastImportAt) > SYNC_STALE_DAYS) {
+    const days = Math.floor(daysSince(hc.lastImportAt));
+    box.appendChild(
+      el('div', { class: 'flag warnung', style: 'margin-bottom:12px;' }, [
+        el('span', { class: 'icon' }, '!'),
+        `Seit ${days} Tagen kein neuer Import mehr. Prüfe, ob die Health-Auto-Export-Automatisierung auf deinem iPhone noch aktiv ist.`
+      ])
+    );
+  }
 
   box.appendChild(
     el('div', {}, [
@@ -248,6 +268,30 @@ function renderPlan(state) {
 
   for (const s of plan.sessions) {
     const d = new Date(s.day + 'T00:00:00');
+    const actions = el('div', { class: 'session-actions' }, [
+      el('button', {
+        class: `small${s.status === 'done' ? ' primary' : ''}`,
+        type: 'button',
+        title: 'Als erledigt markieren',
+        onclick: () => onSetSessionStatus(s.id, 'done')
+      }, '✓'),
+      el('button', {
+        class: `small${s.status === 'missed' ? ' danger' : ''}`,
+        type: 'button',
+        title: 'Als übersprungen markieren',
+        onclick: () => onSetSessionStatus(s.id, 'missed')
+      }, '✕')
+    ]);
+    if (s.status !== 'planned') {
+      actions.appendChild(
+        el('button', {
+          class: 'small',
+          type: 'button',
+          title: 'Zurücksetzen auf geplant',
+          onclick: () => onSetSessionStatus(s.id, 'planned')
+        }, '↺')
+      );
+    }
     box.appendChild(
       el('div', { class: `session status-${s.status}` }, [
         el('div', { class: 'day-badge' }, [
@@ -259,17 +303,66 @@ function renderPlan(state) {
           el('div', { class: 'title' }, sportLabel(s.sport)),
           el('div', { class: 'desc' }, s.description)
         ]),
-        el('div', { class: 'meta' }, [`${s.targetDurationMin} Min`, el('div', {}, `~${Math.round(s.targetLoad)} Pkt.`)])
+        el('div', { class: 'meta' }, [`${s.targetDurationMin} Min`, el('div', {}, `~${Math.round(s.targetLoad)} Pkt.`)]),
+        actions
       ])
     );
   }
 }
 
-function renderActivities(state) {
+// Setzt den Status einer Plan-Session manuell (siehe Verbesserungs-Roadmap,
+// Phase 3) - z.B. wenn eine Einheit ohne Tracking absolviert wurde und die
+// automatische ±1-Tag-Erkennung sie sonst als "verpasst" werten würde.
+async function onSetSessionStatus(sessionId, status) {
+  try {
+    const res = await fetch('/api/plan/session-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, status })
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Unbekannter Fehler');
+    }
+    await refresh();
+  } catch (err) {
+    alert('Status konnte nicht gespeichert werden: ' + err.message);
+  }
+}
+
+// Aktivitätentabelle: eigener, filterbarer Datenabruf statt der auf 20/10
+// begrenzten recentActivities aus /api/state (siehe Verbesserungs-Roadmap,
+// Phase 3 - "mehr als 10 Einträge, Filter/Suche").
+const activityFilters = { q: '', sport: '' };
+let activityVisibleCount = 20;
+let lastActivitiesData = { activities: [], total: 0 };
+
+async function fetchActivities() {
+  const params = new URLSearchParams();
+  if (activityFilters.q) params.set('q', activityFilters.q);
+  if (activityFilters.sport) params.set('sport', activityFilters.sport);
+  params.set('limit', '500');
+  const res = await fetch('/api/activities?' + params.toString());
+  if (!res.ok) throw new Error('Konnte Aktivitäten nicht laden');
+  return res.json();
+}
+
+async function refreshActivities() {
+  lastActivitiesData = await fetchActivities();
+  renderActivities();
+}
+
+function renderActivities() {
   const box = document.getElementById('activities-table');
+  const moreBox = document.getElementById('activities-loadmore');
   box.innerHTML = '';
-  if (!state.recentActivities.length) {
-    box.appendChild(el('div', { class: 'empty-state' }, 'Noch keine Aktivitäten importiert.'));
+  moreBox.innerHTML = '';
+  const list = lastActivitiesData.activities;
+  if (!list.length) {
+    const msg = activityFilters.q || activityFilters.sport
+      ? 'Keine Aktivitäten gefunden, die zu diesem Filter passen.'
+      : 'Noch keine Aktivitäten importiert.';
+    box.appendChild(el('div', { class: 'empty-state' }, msg));
     return;
   }
   const table = el('table', { class: 'data-table' });
@@ -278,26 +371,124 @@ function renderActivities(state) {
     el('th', {}, 'Sportart'),
     el('th', {}, 'Dauer'),
     el('th', {}, 'Distanz'),
-    el('th', {}, 'Ø HF')
+    el('th', {}, 'Ø HF'),
+    el('th', {}, '')
   ]);
   table.appendChild(el('thead', {}, thead));
   const tbody = el('tbody');
-  for (const act of state.recentActivities.slice(0, 10)) {
+  const visible = list.slice(0, activityVisibleCount);
+  for (const act of visible) {
     const dateStr = new Date(act.startDate).toLocaleDateString('de-DE');
     const durationMin = Math.round(act.movingTimeSec / 60);
     const km = (act.distanceMeters / 1000).toFixed(1);
     tbody.appendChild(
       el('tr', {}, [
         el('td', {}, dateStr),
-        el('td', {}, sportLabel(act.type)),
+        el('td', {}, [
+          sportLabel(act.type),
+          act.source === 'manual'
+            ? el('span', { class: 'muted', style: 'margin-left:6px;' }, '(manuell)')
+            : null
+        ]),
         el('td', {}, `${durationMin} Min`),
         el('td', {}, act.distanceMeters ? `${km} km` : '–'),
-        el('td', {}, act.averageHeartrate ? `${Math.round(act.averageHeartrate)}` : '–')
+        el('td', {}, act.averageHeartrate ? `${Math.round(act.averageHeartrate)}` : '–'),
+        el('td', {}, [
+          el('button', { class: 'small danger', onclick: () => onDeleteActivity(act.id) }, '✕')
+        ])
       ])
     );
   }
   table.appendChild(tbody);
   box.appendChild(table);
+
+  if (list.length > activityVisibleCount) {
+    moreBox.appendChild(
+      el('button', { class: 'small', type: 'button', onclick: onLoadMoreActivities },
+        `Mehr laden (${Math.min(activityVisibleCount, list.length)} von ${list.length})`)
+    );
+  }
+}
+
+function onLoadMoreActivities() {
+  activityVisibleCount += 20;
+  renderActivities();
+}
+
+let activitySearchDebounce = null;
+function onActivitySearchInput(e) {
+  activityFilters.q = e.target.value;
+  activityVisibleCount = 20;
+  clearTimeout(activitySearchDebounce);
+  activitySearchDebounce = setTimeout(() => {
+    refreshActivities().catch((err) => console.error(err));
+  }, 300);
+}
+
+function onActivitySportFilterChange(e) {
+  activityFilters.sport = e.target.value;
+  activityVisibleCount = 20;
+  refreshActivities().catch((err) => console.error(err));
+}
+
+function setupActivityFilters() {
+  document.getElementById('activity-search').addEventListener('input', onActivitySearchInput);
+  document.getElementById('activity-sport-filter').addEventListener('change', onActivitySportFilterChange);
+}
+
+// Manuelle Aktivität hinzufügen (siehe Verbesserungs-Roadmap, Phase 3) - für
+// Einheiten, die Health/Strava nicht sauber erfasst haben.
+function setupAddActivityDialog() {
+  const dialog = document.getElementById('add-activity-dialog');
+  document.getElementById('open-add-activity-btn').addEventListener('click', () => {
+    document.getElementById('add-activity-form').reset();
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); // lokale Zeit fürs datetime-local-Feld
+    document.getElementById('activity-date').value = now.toISOString().slice(0, 16);
+    dialog.showModal();
+  });
+  document.getElementById('close-add-activity-btn').addEventListener('click', () => dialog.close());
+  document.getElementById('add-activity-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const dateVal = document.getElementById('activity-date').value;
+    const payload = {
+      name: document.getElementById('activity-name').value || null,
+      type: document.getElementById('activity-type').value,
+      startDate: dateVal ? new Date(dateVal).toISOString() : null,
+      durationMin: Number(document.getElementById('activity-duration').value),
+      distanceKm: numOrNull(document.getElementById('activity-distance').value),
+      averageHeartrate: numOrNull(document.getElementById('activity-hr').value)
+    };
+    try {
+      const res = await fetch('/api/activities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Unbekannter Fehler');
+      }
+      dialog.close();
+      await refresh();
+    } catch (err) {
+      alert('Aktivität konnte nicht gespeichert werden: ' + err.message);
+    }
+  });
+}
+
+async function onDeleteActivity(id) {
+  if (!confirm('Diese Aktivität wirklich aus der App löschen? (Wird beim nächsten Health-Sync nicht automatisch neu angelegt, außer du löschst sie auch dort erneut und syncst nochmal.)')) return;
+  try {
+    const res = await fetch(`/api/activities?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Unbekannter Fehler');
+    }
+    await refresh();
+  } catch (err) {
+    alert('Löschen fehlgeschlagen: ' + err.message);
+  }
 }
 
 function renderSettingsForm(state) {
@@ -320,7 +511,7 @@ async function refresh() {
   renderFlags(currentState);
   renderChart(currentState);
   renderPlan(currentState);
-  renderActivities(currentState);
+  await refreshActivities();
   renderSettingsForm(currentState);
 }
 
@@ -374,6 +565,9 @@ function setupSettingsDialog() {
   const dialog = document.getElementById('settings-dialog');
   document.getElementById('open-settings-btn').addEventListener('click', () => dialog.showModal());
   document.getElementById('close-settings-btn').addEventListener('click', () => dialog.close());
+  document.getElementById('export-backup-btn').addEventListener('click', () => {
+    window.location.href = '/api/backup';
+  });
   document.getElementById('settings-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const payload = {
@@ -413,6 +607,8 @@ function checkUrlParams() {
 document.addEventListener('DOMContentLoaded', async () => {
   checkUrlParams();
   setupSettingsDialog();
+  setupAddActivityDialog();
+  setupActivityFilters();
   document.getElementById('regenerate-plan-btn').addEventListener('click', onRegeneratePlan);
   try {
     await refresh();
