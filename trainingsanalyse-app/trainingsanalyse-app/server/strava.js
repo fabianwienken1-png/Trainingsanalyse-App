@@ -83,7 +83,7 @@ async function ensureValidToken(store, saveFn) {
   store.strava.accessToken = refreshed.access_token;
   store.strava.refreshToken = refreshed.refresh_token;
   store.strava.expiresAt = refreshed.expires_at;
-  if (saveFn) saveFn(store);
+  if (saveFn) await saveFn(store);
   return store.strava.accessToken;
 }
 
