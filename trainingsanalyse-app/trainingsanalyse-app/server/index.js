@@ -452,6 +452,19 @@ route('GET', '/api/health', async (req, res) => {
 // ---------- Server ----------
 
 const server = http.createServer(async (req, res) => {
+  // CORS: erlaubt Aufrufe von außerhalb der eigenen App-Origin (z.B. eine lokal
+  // geöffnete HTML-Datei für einmalige Skripte/Backfill-Importe). Single-User-App
+  // mit Token-Auth auf den sensiblen Routen - ein offener Access-Control-Allow-Origin
+  // ist hier unkritisch. Ohne das blockiert der Browser (v.a. Safari) den Zugriff
+  // von file://-Seiten mit "Load failed", noch bevor die Anfrage den Server erreicht.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   try {
     const urlObj = new URL(req.url, `http://${req.headers.host}`);
     const pathname = urlObj.pathname;
