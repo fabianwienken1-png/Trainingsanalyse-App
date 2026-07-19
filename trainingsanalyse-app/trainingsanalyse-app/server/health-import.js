@@ -18,7 +18,12 @@
 function mapWorkoutType(rawType) {
   const t = (rawType || '').toLowerCase();
 
-  if (t.includes('lauf') || t.includes('run')) {
+  // "ausführ..." zusätzlich zu "lauf"/"run": Health Auto Export übersetzt den
+  // englischen Workout-Namen "Run" fälschlich als "Ausführen" (im Sinne von
+  // "ein Programm ausführen") statt als Sportart "Laufen" - siehe echte
+  // Export-Beispieldaten. Ohne diesen Fall würde "Outdoor Ausführen" in den
+  // generischen "Workout"-Fallback statt "Run" fallen.
+  if (t.includes('lauf') || t.includes('run') || t.includes('ausführ') || t.includes('ausfuhr')) {
     if (t.includes('trail')) return 'TrailRun';
     return 'Run';
   }
