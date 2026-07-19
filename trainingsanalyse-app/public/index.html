@@ -28,7 +28,14 @@
 <main class="container" id="app-root">
 
   <section class="card">
-    <h2>Strava</h2>
+    <h2>Apple Health · Kurzbefehl</h2>
+    <div id="health-import-status"></div>
+  </section>
+
+  <section class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h2 style="margin:0;">Strava <span class="muted" style="text-transform:none; font-weight:400;">(optional, kostenpflichtig)</span></h2>
+    </div>
     <div id="strava-status"></div>
   </section>
 
@@ -45,6 +52,41 @@
   </section>
 
   <section class="card">
+    <h2>Wohlbefinden-Check</h2>
+    <div id="wellbeing-status"></div>
+    <form id="wellbeing-form" style="margin-top:14px;">
+      <div class="form-row">
+        <label for="wellbeing-rpe">Wie anstrengend fühlte sich dein Training zuletzt an? (RPE)</label>
+        <select id="wellbeing-rpe" required>
+          <option value="">Bitte wählen</option>
+          <option value="1">1 – Sehr leicht</option>
+          <option value="2">2 – Leicht</option>
+          <option value="3">3 – Moderat</option>
+          <option value="4">4 – Anstrengend</option>
+          <option value="5">5 – Sehr anstrengend / erschöpfend</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="wellbeing-sleep">Wie war deine Schlafqualität zuletzt?</label>
+        <select id="wellbeing-sleep" required>
+          <option value="">Bitte wählen</option>
+          <option value="1">1 – Sehr schlecht</option>
+          <option value="2">2 – Schlecht</option>
+          <option value="3">3 – Mittel</option>
+          <option value="4">4 – Gut</option>
+          <option value="5">5 – Sehr gut</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="wellbeing-note">Notiz (optional)</label>
+        <input id="wellbeing-note" type="text" placeholder="z.B. erkältet, viel Stress im Job..." maxlength="500" />
+      </div>
+      <button type="submit" class="primary small">Eintrag speichern</button>
+    </form>
+    <div id="wellbeing-history" style="margin-top:14px;"></div>
+  </section>
+
+  <section class="card">
     <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; margin-bottom:12px;">
       <div>
         <h2 style="margin-bottom:2px;">Trainingsplan</h2>
@@ -57,8 +99,28 @@
   </section>
 
   <section class="card">
-    <h2>Letzte Aktivitäten</h2>
+    <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h2 style="margin:0;">Letzte Aktivitäten</h2>
+      <button id="open-add-activity-btn" class="small" type="button">+ Aktivität hinzufügen</button>
+    </div>
+    <div class="filter-row">
+      <input id="activity-search" type="text" placeholder="Suche nach Name oder Sportart..." />
+      <select id="activity-sport-filter">
+        <option value="">Alle Sportarten</option>
+        <option value="Run">Laufen</option>
+        <option value="TrailRun">Trail-Laufen</option>
+        <option value="Ride">Radfahren</option>
+        <option value="VirtualRide">Rad (virtuell)</option>
+        <option value="Swim">Schwimmen</option>
+        <option value="WeightTraining">Krafttraining</option>
+        <option value="Walk">Gehen</option>
+        <option value="Hike">Wandern</option>
+        <option value="Yoga">Yoga</option>
+        <option value="Workout">Workout</option>
+      </select>
+    </div>
     <div id="activities-table"></div>
+    <div id="activities-loadmore" style="margin-top:12px; text-align:center;"></div>
   </section>
 
 </main>
@@ -101,6 +163,54 @@
       Hinweis: Ohne Maximalpuls &amp; Ruhepuls wird die Trainingslast über eine grobe
       Schätzung nach Sportart und Dauer berechnet statt über Herzfrequenz.
     </p>
+    <div class="dialog-actions" style="justify-content: space-between;">
+      <button type="button" class="small" id="export-backup-btn">Backup exportieren</button>
+      <button type="submit" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="add-activity-dialog">
+  <div class="dialog-header">
+    <h3>Aktivität hinzufügen</h3>
+    <button class="small" id="close-add-activity-btn" type="button">Schließen</button>
+  </div>
+  <form id="add-activity-form" class="dialog-body">
+    <div class="form-row">
+      <label for="activity-name">Name (optional)</label>
+      <input id="activity-name" type="text" placeholder="z.B. Krafttraining Studio" />
+    </div>
+    <div class="form-row">
+      <label for="activity-type">Sportart</label>
+      <select id="activity-type">
+        <option value="Run">Laufen</option>
+        <option value="TrailRun">Trail-Laufen</option>
+        <option value="Ride">Radfahren</option>
+        <option value="VirtualRide">Rad (virtuell)</option>
+        <option value="Swim">Schwimmen</option>
+        <option value="WeightTraining">Krafttraining</option>
+        <option value="Walk">Gehen</option>
+        <option value="Hike">Wandern</option>
+        <option value="Yoga">Yoga</option>
+        <option value="Workout">Workout (allgemein)</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="activity-date">Datum &amp; Uhrzeit</label>
+      <input id="activity-date" type="datetime-local" required />
+    </div>
+    <div class="form-row">
+      <label for="activity-duration">Dauer (Minuten)</label>
+      <input id="activity-duration" type="number" min="1" max="600" required />
+    </div>
+    <div class="form-row">
+      <label for="activity-distance">Distanz (km, optional)</label>
+      <input id="activity-distance" type="number" min="0" step="0.1" />
+    </div>
+    <div class="form-row">
+      <label for="activity-hr">Ø Herzfrequenz (optional)</label>
+      <input id="activity-hr" type="number" min="60" max="220" />
+    </div>
     <div class="dialog-actions">
       <button type="submit" class="primary">Speichern</button>
     </div>
