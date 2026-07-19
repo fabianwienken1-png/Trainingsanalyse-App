@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Trainingsanalyse</title>
+<meta name="description" content="Trainingsanalyse & adaptive Trainingspläne, verknüpft mit Strava." />
+
+<link rel="manifest" href="/manifest.json" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Training" />
+<meta name="theme-color" content="#2a78d6" />
+<link rel="icon" href="/icons/icon-192.png" />
+
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<header class="app-header">
+  <h1>Trainingsanalyse</h1>
+  <div class="actions">
+    <button id="open-settings-btn" class="small">Einstellungen</button>
+  </div>
+</header>
+
+<main class="container" id="app-root">
+
+  <section class="card">
+    <h2>Strava</h2>
+    <div id="strava-status"></div>
+  </section>
+
+  <div id="stat-grid" class="stat-grid"></div>
+
+  <section class="card">
+    <h2>Auffälligkeiten</h2>
+    <div id="flags"></div>
+  </section>
+
+  <section class="card">
+    <h2>Tägliche Trainingslast (28 Tage)</h2>
+    <div id="load-chart"></div>
+  </section>
+
+  <section class="card">
+    <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <div>
+        <h2 style="margin-bottom:2px;">Trainingsplan</h2>
+        <div id="plan-week-label" class="muted"></div>
+      </div>
+      <button id="regenerate-plan-btn" class="small">Neue Woche planen</button>
+    </div>
+    <div id="plan-reason"></div>
+    <div id="plan-sessions" class="session-list"></div>
+  </section>
+
+  <section class="card">
+    <h2>Letzte Aktivitäten</h2>
+    <div id="activities-table"></div>
+  </section>
+
+</main>
+
+<dialog id="settings-dialog">
+  <div class="dialog-header">
+    <h3>Einstellungen</h3>
+    <button class="small" id="close-settings-btn" type="button">Schließen</button>
+  </div>
+  <form id="settings-form" class="dialog-body">
+    <div class="form-row">
+      <label for="setting-maxhr">Maximale Herzfrequenz (Schläge/Min)</label>
+      <input id="setting-maxhr" type="number" min="100" max="230" placeholder="z.B. 190" />
+    </div>
+    <div class="form-row">
+      <label for="setting-restinghr">Ruhepuls (Schläge/Min)</label>
+      <input id="setting-restinghr" type="number" min="30" max="100" placeholder="z.B. 52" />
+    </div>
+    <div class="form-row">
+      <label for="setting-gender">Geschlecht (für Trainingslast-Formel)</label>
+      <select id="setting-gender">
+        <option value="unspecified">Nicht angegeben</option>
+        <option value="male">Männlich</option>
+        <option value="female">Weiblich</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="setting-cap">Max. wöchentliche Belastungssteigerung (%)</label>
+      <input id="setting-cap" type="number" min="0" max="30" />
+    </div>
+    <div class="form-row">
+      <label for="setting-deload">Deload-Woche alle N Wochen</label>
+      <input id="setting-deload" type="number" min="2" max="8" />
+    </div>
+    <div class="form-row">
+      <label for="setting-sessions">Standard-Einheiten pro Woche (Startwert, ohne Historie)</label>
+      <input id="setting-sessions" type="number" min="1" max="10" />
+    </div>
+    <p class="muted">
+      Hinweis: Ohne Maximalpuls &amp; Ruhepuls wird die Trainingslast über eine grobe
+      Schätzung nach Sportart und Dauer berechnet statt über Herzfrequenz.
+    </p>
+    <div class="dialog-actions">
+      <button type="submit" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/js/charts.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
