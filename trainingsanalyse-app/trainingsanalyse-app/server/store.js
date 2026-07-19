@@ -75,10 +75,20 @@ function load() {
       isNew = true;
     }
   }
-  // Beim allerersten Start (oder nach einem Update, das appleHealth neu hinzugefügt hat)
-  // sofort einen Import-Token erzeugen, damit die Kurzbefehl-Einrichtung ohne zusätzlichen
-  // "Token generieren"-Schritt sofort funktioniert.
-  if (!store.appleHealth.importToken) {
+  // WICHTIG (Render Free Tier hat kein persistentes Dateisystem - siehe README/
+  // INSTALLATION.md): data/store.json wird bei jedem Deploy und jedem "Einschlafen"
+  // der kostenlosen Instanz verworfen. Ohne diesen Fix würde dabei jedes Mal ein
+  // neuer, zufälliger Import-Token erzeugt, wodurch die in der Kurzbefehl-/Health-
+  // Auto-Export-Konfiguration hinterlegte URL ständig ungültig würde. Ist die
+  // Umgebungsvariable APPLE_HEALTH_IMPORT_TOKEN gesetzt (Render-Dashboard →
+  // Environment), gewinnt sie deshalb IMMER - sie übersteht Deploys/Neustarts,
+  // weil sie Teil der Service-Konfiguration ist, nicht des Dateisystems.
+  const envToken = process.env.APPLE_HEALTH_IMPORT_TOKEN;
+  if (envToken && store.appleHealth.importToken !== envToken) {
+    store.appleHealth.importToken = envToken;
+    isNew = true;
+  } else if (!envToken && !store.appleHealth.importToken) {
+    // Kein Env-Var gesetzt (z.B. lokale Entwicklung) - wie bisher zufällig erzeugen.
     store.appleHealth.importToken = crypto.randomBytes(20).toString('hex');
     isNew = true;
   }
