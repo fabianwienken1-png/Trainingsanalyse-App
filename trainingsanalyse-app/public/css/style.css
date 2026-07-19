@@ -245,6 +245,13 @@ button.primary {
 button.primary:hover { filter: brightness(1.06); }
 button:disabled { opacity: 0.5; cursor: default; }
 button.small { padding: 6px 12px; font-size: 12px; }
+button.danger {
+  background: transparent;
+  color: #c0392b;
+  border-color: transparent;
+  padding: 2px 8px;
+}
+button.danger:hover { background: rgba(192, 57, 43, 0.1); }
 
 /* Legend */
 .legend {
@@ -305,6 +312,8 @@ button.small { padding: 6px 12px; font-size: 12px; }
 .session.status-done { opacity: 0.6; }
 .session.status-done .info .title::after { content: " ✓ absolviert"; color: var(--status-good); font-weight: 600; }
 .session.status-missed .info .title::after { content: " – verpasst"; color: var(--text-muted); font-weight: 500; }
+.session .session-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.session .session-actions button { padding: 4px 8px; }
 
 .plan-reason {
   font-size: 12px;
@@ -329,6 +338,19 @@ button.small { padding: 6px 12px; font-size: 12px; }
   font-family: var(--font-sans);
   font-size: 14px;
 }
+
+.filter-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.filter-row input, .filter-row select {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--page-plane);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+.filter-row input { flex: 1; min-width: 160px; }
+.filter-row select { min-width: 160px; }
 
 .strava-status {
   display: flex;
