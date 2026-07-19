@@ -119,10 +119,21 @@ function serveStatic(req, res, pathname, headOnly) {
       return;
     }
     const ext = path.extname(fullPath);
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': content.length
-    });
+    };
+    // HTML/JS/CSS/Manifest ohne HTTP-Cache ausliefern: die App hat keine
+    // Cache-Busting-Dateinamen (z.B. app.abc123.js), daher würde ein vom
+    // Browser gecachtes index.html/app.js nach einem Deploy sonst erst nach
+    // einem harten Reload aktualisiert werden (siehe Verwirrung beim
+    // Phase-2-Rollout - der Deploy war korrekt, nur der Browser zeigte noch
+    // die alte Version). Bilder/Icons ändern sich praktisch nie und dürfen
+    // normal gecacht werden.
+    if (['.html', '.js', '.css', '.webmanifest', '.json'].includes(ext)) {
+      headers['Cache-Control'] = 'no-cache, must-revalidate';
+    }
+    res.writeHead(200, headers);
     res.end(headOnly ? undefined : content);
   });
 }
