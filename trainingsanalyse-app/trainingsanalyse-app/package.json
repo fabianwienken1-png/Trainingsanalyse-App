@@ -1,0 +1,17 @@
+{
+  "name": "trainingsanalyse-app",
+  "version": "1.0.0",
+  "description": "Trainingsanalyse & adaptive Trainingspläne, verknüpft mit Strava. Regelbasierte Analyse (Trainingslast, ACWR) und automatischer Import via Strava-Webhook. Keine externen Abhängigkeiten – läuft mit reinem Node.js (>=18).",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "setup-webhook": "node server/setup-webhook.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "license": "MIT"
+}
