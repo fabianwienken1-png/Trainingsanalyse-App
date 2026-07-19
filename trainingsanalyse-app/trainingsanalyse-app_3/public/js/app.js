@@ -278,7 +278,8 @@ function renderActivities(state) {
     el('th', {}, 'Sportart'),
     el('th', {}, 'Dauer'),
     el('th', {}, 'Distanz'),
-    el('th', {}, 'Ø HF')
+    el('th', {}, 'Ø HF'),
+    el('th', {}, '')
   ]);
   table.appendChild(el('thead', {}, thead));
   const tbody = el('tbody');
@@ -292,12 +293,29 @@ function renderActivities(state) {
         el('td', {}, sportLabel(act.type)),
         el('td', {}, `${durationMin} Min`),
         el('td', {}, act.distanceMeters ? `${km} km` : '–'),
-        el('td', {}, act.averageHeartrate ? `${Math.round(act.averageHeartrate)}` : '–')
+        el('td', {}, act.averageHeartrate ? `${Math.round(act.averageHeartrate)}` : '–'),
+        el('td', {}, [
+          el('button', { class: 'small danger', onclick: () => onDeleteActivity(act.id) }, '✕')
+        ])
       ])
     );
   }
   table.appendChild(tbody);
   box.appendChild(table);
+}
+
+async function onDeleteActivity(id) {
+  if (!confirm('Diese Aktivität wirklich aus der App löschen? (Wird beim nächsten Health-Sync nicht automatisch neu angelegt, außer du löschst sie auch dort erneut und syncst nochmal.)')) return;
+  try {
+    const res = await fetch(`/api/activities?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Unbekannter Fehler');
+    }
+    await refresh();
+  } catch (err) {
+    alert('Löschen fehlgeschlagen: ' + err.message);
+  }
 }
 
 function renderSettingsForm(state) {
