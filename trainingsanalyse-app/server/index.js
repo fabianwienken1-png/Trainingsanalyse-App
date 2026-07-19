@@ -22,6 +22,8 @@ const store = require('./store');
 const strava = require('./strava');
 const analysis = require('./analysis');
 const planner = require('./planner');
+const healthImport = require('./health-import');
+const healthAutoExport = require('./health-auto-export');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -63,12 +65,17 @@ function sendError(res, status, message) {
   sendJson(res, status, { error: message });
 }
 
+// 25 statt ursprünglich 5 MB: Health-Auto-Export-Payloads können bei aktivierten
+// GPS-Routen pro Sync mehrere MB groß werden (siehe health-auto-export.js) -
+// wir empfehlen zwar, Routen in der App-Automation zu deaktivieren (sie werden
+// für die Trainingsanalyse nicht gebraucht), aber ein großzügigeres Limit hier
+// verhindert trotzdem, dass ein einzelner unerwartet großer Sync einfach verworfen wird.
 function parseJsonBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk) => {
       data += chunk;
-      if (data.length > 5 * 1024 * 1024) {
+      if (data.length > 25 * 1024 * 1024) {
         reject(new Error('Body zu groß'));
         req.destroy();
       }
@@ -157,10 +164,122 @@ route('GET', '/api/state', async (req, res) => {
       lastSyncAt: s.strava.lastSyncAt,
       webhookActive: !!s.strava.webhookSubscriptionId
     },
+    appleHealth: {
+      importToken: s.appleHealth.importToken,
+      lastImportAt: s.appleHealth.lastImportAt,
+      importCount: s.appleHealth.importCount
+    },
     recentActivities: s.activities.slice(0, 20),
     plan: s.plan,
     analysis: report
   });
+});
+
+// Löscht eine einzelne Aktivität (z.B. Test-Trainings, die man in Health/Strava
+// zwar entfernt hat, die aber - da unser Import rein additiv ist, siehe
+// health-import.js/health-auto-export.js - sonst für immer in der App
+// stehen blieben würden). Kein Pfad-Parameter-Routing im einfachen Router hier,
+// daher als Query-Parameter statt "/api/activities/:id".
+route('DELETE', '/api/activities', async (req, res, urlObj) => {
+  const id = urlObj.searchParams.get('id');
+  if (!id) {
+    return sendError(res, 400, 'Fehlender Parameter "id".');
+  }
+  const s = loadStore();
+  const idx = s.activities.findIndex((a) => a.id === id);
+  if (idx === -1) {
+    return sendError(res, 404, 'Aktivität nicht gefunden (evtl. schon gelöscht).');
+  }
+  const [removed] = s.activities.splice(idx, 1);
+  saveStore(s);
+  sendJson(res, 200, { deleted: true, activity: removed });
+});
+
+// Nimmt einen einzelnen Trainings-Datensatz vom iOS-Kurzbefehl entgegen.
+// Auth über einen einfachen geteilten Token (kein OAuth nötig, da Single-User-App):
+// entweder als ?token=... in der URL oder als "Authorization: Bearer ..."-Header.
+route('POST', '/api/import/health', async (req, res, urlObj) => {
+  const s = loadStore();
+  const headerToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const providedToken = urlObj.searchParams.get('token') || headerToken;
+
+  if (!providedToken || providedToken !== s.appleHealth.importToken) {
+    return sendError(res, 401, 'Ungültiger oder fehlender Import-Token.');
+  }
+
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+
+  const validation = healthImport.validatePayload(body);
+  if (!validation.ok) {
+    return sendError(res, 400, validation.error);
+  }
+
+  const normalized = healthImport.normalizeHealthPayload(body);
+  healthImport.mergeHealthActivity(s, normalized);
+  s.appleHealth.lastImportAt = new Date().toISOString();
+  s.appleHealth.importCount = (s.appleHealth.importCount || 0) + 1;
+  saveStore(s);
+
+  sendJson(res, 200, { received: true, activity: normalized });
+});
+
+// Nimmt einen Health-Auto-Export-Payload entgegen (siehe health-auto-export.js
+// für das erwartete JSON-Format). Ein Aufruf kann mehrere Workouts enthalten
+// (z.B. bei einem automatischen periodischen Sync mit mehreren Trainings seit
+// dem letzten Export) - die werden dann alle in einem Rutsch verarbeitet.
+// Gleicher Token wie /api/import/health, damit nur ein Secret verwaltet werden muss.
+route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
+  const s = loadStore();
+  const headerToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const providedToken = urlObj.searchParams.get('token') || headerToken;
+
+  if (!providedToken || providedToken !== s.appleHealth.importToken) {
+    return sendError(res, 401, 'Ungültiger oder fehlender Import-Token.');
+  }
+
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+
+  const result = healthAutoExport.processPayload(s, body);
+
+  if (result.imported.length > 0) {
+    s.appleHealth.lastImportAt = new Date().toISOString();
+    s.appleHealth.importCount = (s.appleHealth.importCount || 0) + result.imported.length;
+    saveStore(s);
+  }
+
+  console.log(
+    `[health-auto-export] ${result.totalWorkouts} Workout(s) im Payload, ${result.imported.length} importiert, ${result.skipped.length} übersprungen.`
+  );
+  if (result.totalWorkouts > 0 && result.imported.length === 0) {
+    console.log('[health-auto-export] Keines der Workouts konnte geparst werden. Felder des ersten Eintrags:', result.skipped[0]);
+  }
+
+  sendJson(res, 200, {
+    received: true,
+    totalWorkouts: result.totalWorkouts,
+    imported: result.imported.length,
+    skipped: result.skipped.length,
+    activities: result.imported
+  });
+});
+
+// Erzeugt einen neuen Import-Token (macht den alten ungültig) - z.B. falls der
+// Token versehentlich geteilt wurde oder du den Kurzbefehl neu einrichtest.
+route('POST', '/api/import/health/rotate-token', async (req, res) => {
+  const s = loadStore();
+  s.appleHealth.importToken = crypto.randomBytes(20).toString('hex');
+  saveStore(s);
+  sendJson(res, 200, { importToken: s.appleHealth.importToken });
 });
 
 route('POST', '/api/settings', async (req, res) => {
