@@ -459,3 +459,4 @@ select {
   margin-top: 12px; padding: 10px 12px; border-radius: 12px;
   background: #2e2416; border: 1px solid #5a4520; color: #f7d9a0; font-size: 14px; line-height: 1.4;
 }
+.rec-missing { font-family: var(--font-num); font-weight: 600; font-size: 24px; color: var(--text-2); margin: 4px 0 2px; }

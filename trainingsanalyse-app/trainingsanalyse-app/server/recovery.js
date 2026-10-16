@@ -164,8 +164,11 @@ function mergeHealthMetrics(store, body) {
 // Auswertung
 // ---------------------------------------------------------------------------
 
+// Kalendertag in der Zeitzone des Nutzers (Health Auto Export liefert lokale Tage,
+// der Server läuft in UTC – ohne Umrechnung wäre z.B. 0:30 Uhr noch "gestern").
+const USER_TZ = process.env.USER_TIMEZONE || 'Europe/Berlin';
 function dayKey(date) {
-  return date.toISOString().slice(0, 10);
+  return date.toLocaleDateString('sv-SE', { timeZone: USER_TZ });
 }
 
 // Werte der letzten `days` Tage (inkl. heute) aus einer Tages-Map
@@ -205,8 +208,14 @@ function computeRecovery(health, now = new Date()) {
   const rhr28 = lastDays(rhrMap, 28, now);
   if (!sleep7.length && !hrv28.length && !rhr28.length) return null;
 
-  const lastNightRaw = latest(sleepMap, now);
-  const lastNight = lastNightRaw ? { day: lastNightRaw.day, ...lastNightRaw.value } : null;
+  // "Letzte Nacht" nur, wenn für heute (Tag des Aufwachens) wirklich Schlaf aufgezeichnet
+  // wurde – sonst z.B. Uhr nachts nicht getragen. Dann zeigen wir die zuletzt
+  // aufgezeichnete Nacht separat an, statt sie als "letzte Nacht" auszugeben.
+  const todayKey = dayKey(now);
+  const lastNight = sleepMap[todayKey] ? { day: todayKey, ...sleepMap[todayKey] } : null;
+  const recordedDays = Object.keys(sleepMap).filter((d) => d <= todayKey).sort();
+  const lastDay = recordedDays[recordedDays.length - 1];
+  const lastRecorded = !lastNight && lastDay ? { day: lastDay, ...sleepMap[lastDay] } : null;
   const hrvLatest = latest(hrvMap, now);
   const rhrLatest = latest(rhrMap, now);
 
@@ -241,6 +250,7 @@ function computeRecovery(health, now = new Date()) {
     score,
     reasons,
     lastNight,
+    lastRecorded,
     sleepAvg7: sleepAvg7 === null ? null : round(sleepAvg7),
     sleepAvg28: sleepAvg28 === null ? null : round(sleepAvg28),
     sleepNights7: sleep7.length,

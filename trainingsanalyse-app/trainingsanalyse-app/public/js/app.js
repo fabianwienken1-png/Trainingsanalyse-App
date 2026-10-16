@@ -432,7 +432,8 @@ function infoContent(key) {
         paras: [
           'Schlaf ist der wichtigste Erholungsfaktor: Im Tiefschlaf repariert der Körper Muskeln und baut Trainingsreize in Leistung um. Ausdauersportler brauchen meist 7–9 Stunden.',
           'Die Einschätzung kombiniert deinen Schlaf der letzten 7 Nächte, die letzte Nacht und – falls vorhanden – Herzfrequenzvariabilität (HRV) und Ruhepuls im Vergleich zu deinem eigenen 4-Wochen-Schnitt. Eine niedrige HRV oder ein erhöhter Ruhepuls deuten auf Ermüdung, Stress oder einen beginnenden Infekt hin.',
-          'Bei eingeschränkter Erholung reduziert der Wochenplan die Belastung automatisch leicht.'
+          'Bei eingeschränkter Erholung reduziert der Wochenplan die Belastung automatisch leicht.',
+          'Nächte ohne Aufzeichnung (z.B. Uhr nicht getragen) werden einfach ausgelassen: Sie zählen nicht als 0 Stunden, die Durchschnitte werden nur aus den aufgezeichneten Nächten gebildet.'
         ],
         current: !rec ? null : rec.reasons.length
           ? `Aktuell: ${rec.reasons.join(', ')}.`
@@ -507,11 +508,19 @@ function renderRecovery() {
     ]),
     el('div', { class: 'rec-main' }, [
       el('div', { class: 'sport-icon', style: 'background:#23203a;color:#9b8cf2', html: MOON_ICON }),
-      el('div', {}, [
-        el('div', { class: 'muted small' }, 'Schlaf letzte Nacht'),
-        el('div', { class: 'rec-big' }, ln ? [`${fmtHours(ln.total)}`, el('span', { class: 'unit' }, ' h')] : '–'),
-        phases ? el('div', { class: 'muted small' }, phases) : null
-      ])
+      ln
+        ? el('div', {}, [
+          el('div', { class: 'muted small' }, 'Schlaf letzte Nacht'),
+          el('div', { class: 'rec-big' }, [`${fmtHours(ln.total)}`, el('span', { class: 'unit' }, ' h')]),
+          phases ? el('div', { class: 'muted small' }, phases) : null
+        ])
+        : el('div', {}, [
+          el('div', { class: 'muted small' }, 'Schlaf letzte Nacht'),
+          el('div', { class: 'rec-missing' }, 'Nicht aufgezeichnet'),
+          rec.lastRecorded
+            ? el('div', { class: 'muted small' }, `Zuletzt: ${fmtHours(rec.lastRecorded.total)} h in der Nacht zum ${new Date(rec.lastRecorded.day + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })}`)
+            : null
+        ])
     ]),
     el('div', { class: 'rec-metrics', style: `grid-template-columns:repeat(${metrics.length}, minmax(0,1fr))` }, metrics),
     rec.status === 'eingeschränkt' && rec.reasons.length
