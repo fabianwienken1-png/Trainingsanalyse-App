@@ -460,3 +460,16 @@ select {
   background: #2e2416; border: 1px solid #5a4520; color: #f7d9a0; font-size: 14px; line-height: 1.4;
 }
 .rec-missing { font-family: var(--font-num); font-weight: 600; font-size: 24px; color: var(--text-2); margin: 4px 0 2px; }
+
+/* ---------- Tagesvorschlag ---------- */
+
+.suggestion { border-color: #5a4520; }
+.swap { display: flex; flex-direction: column; gap: 4px; }
+.swap-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.swap-item.old { opacity: 0.6; }
+.swap-item.old .t { text-decoration: line-through; }
+.swap-item .t { font-size: 15px; font-weight: 600; }
+.swap-arrow { text-align: center; color: var(--muted); font-size: 14px; line-height: 1; }
+.session-actions button.accept { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.adjust-row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.adjust-row .reset-btn { padding-top: 0; }

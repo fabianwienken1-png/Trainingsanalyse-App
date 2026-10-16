@@ -201,6 +201,7 @@ route('GET', '/api/state', async (req, res) => {
     },
     recentActivities: s.activities.slice(0, 20),
     recovery: rec,
+    planSuggestion: planner.suggestAdjustment(s, rec, recovery.dayKey(new Date())),
     sleepSeries: recovery.sleepSeries(s.health, 28),
     healthMetrics: { lastImportAt: (s.health && s.health.lastImportAt) || null },
     plan: s.plan,
@@ -333,6 +334,25 @@ route('POST', '/api/activities/dedupe', async (req, res) => {
   if (removals.length) await saveStore(s);
   console.log(`[dedupe] ${removals.length} Eintrag/Einträge manuell bereinigt.`);
   sendJson(res, 200, { removed: removals.length, total: s.activities.length });
+});
+
+// Passt eine Plan-Einheit an die Erholung an (locker statt hart) oder macht das rückgängig
+route('POST', '/api/plan/adjust-session', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const { sessionId, action, reason } = body || {};
+  if (!sessionId || !['easy', 'undo'].includes(action)) {
+    return sendError(res, 400, 'Felder "sessionId" und "action" (easy|undo) sind erforderlich.');
+  }
+  const s = await loadStore();
+  const result = planner.adjustSession(s, sessionId, action, reason);
+  if (result.error) return sendError(res, 404, result.error);
+  await saveStore(s);
+  sendJson(res, 200, { session: result.session });
 });
 
 // Löscht eine einzelne Aktivität (z.B. Test-Trainings, die man in Health/Strava

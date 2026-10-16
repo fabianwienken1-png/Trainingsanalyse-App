@@ -228,8 +228,8 @@ function computeRecovery(health, now = new Date()) {
   let score = 0;
   const reasons = [];
   if (sleepAvg7 !== null) {
-    if (sleepAvg7 < 6) { score -= 2; reasons.push(`Ø nur ${fmtH(sleepAvg7)} Schlaf in den letzten 7 Tagen`); }
-    else if (sleepAvg7 < 7) { score -= 1; reasons.push(`Ø ${fmtH(sleepAvg7)} Schlaf in den letzten 7 Tagen (Ziel: 7–9 h)`); }
+    if (sleepAvg7 < 6) { score -= 2; reasons.push(`Ø nur ${fmtH(sleepAvg7)} Schlaf in den letzten 7 Nächten`); }
+    else if (sleepAvg7 < 7) { score -= 1; reasons.push(`Ø ${fmtH(sleepAvg7)} Schlaf in den letzten 7 Nächten`); }
     else if (sleepAvg7 >= 7.5) { score += 1; }
   }
   if (lastNight && lastNight.total < 6) { score -= 1; reasons.push(`letzte Nacht nur ${fmtH(lastNight.total)}`); }
@@ -276,4 +276,4 @@ function sleepSeries(health, days = 28, now = new Date()) {
   return out;
 }
 
-module.exports = { mergeHealthMetrics, computeRecovery, sleepSeries, parseSleep, parseDaily };
+module.exports = { dayKey, mergeHealthMetrics, computeRecovery, sleepSeries, parseSleep, parseDaily };

@@ -273,6 +273,7 @@ function renderToday() {
   ]));
 
   renderRecovery();
+  renderSuggestion();
 
   // Kennzahlen dieser Woche (lokale Kalenderwoche, Mo–So)
   const weekStart = startOfLocalWeek(now);
@@ -529,6 +530,61 @@ function renderRecovery() {
   ]));
 }
 
+const INTENSITY_LABELS = { easy: 'locker', moderate: 'mittel', hard: 'hart' };
+
+function dismissedKey(id) { return `dismiss-suggestion-${id}`; }
+function isDismissed(id) {
+  try { return localStorage.getItem(dismissedKey(id)) === '1'; } catch (e) { return false; }
+}
+function dismiss(id) {
+  try { localStorage.setItem(dismissedKey(id), '1'); } catch (e) { /* egal */ }
+}
+
+function renderSuggestion() {
+  const sug = currentState.planSuggestion;
+  if (!sug || isDismissed(sug.sessionId)) {
+    mount('plan-suggestion');
+    return;
+  }
+  const g = groupOf(sug.sport);
+  mount('plan-suggestion', el('div', { class: 'card suggestion' }, [
+    el('div', { class: 'card-head', style: 'margin-bottom:8px' }, [el('h2', {}, 'Vorschlag für heute')]),
+    el('p', { class: 'info-text', style: 'margin-bottom:12px' }, `${sug.reason} Statt der ${INTENSITY_LABELS[sug.current.intensity] || ''}en Einheit lieber locker trainieren.`),
+    el('div', { class: 'swap' }, [
+      el('div', { class: 'swap-item old' }, [
+        el('span', { class: 'sport-bar', style: `background:${g.color};min-height:34px` }),
+        el('div', {}, [el('div', { class: 'small muted' }, 'Geplant'), el('div', { class: 't' }, `${sportLabel(sug.sport)} · ${INTENSITY_LABELS[sug.current.intensity]} · ${sug.current.durationMin} min`)])
+      ]),
+      el('div', { class: 'swap-arrow', 'aria-hidden': 'true' }, '↓'),
+      el('div', { class: 'swap-item' }, [
+        el('span', { class: 'sport-bar', style: `background:${g.color};min-height:34px` }),
+        el('div', {}, [el('div', { class: 'small muted' }, 'Vorschlag'), el('div', { class: 't' }, `${sportLabel(sug.sport)} · locker · ${sug.proposed.durationMin} min`)])
+      ])
+    ]),
+    el('div', { class: 'session-actions', style: 'margin-top:14px' }, [
+      el('button', { type: 'button', class: 'accept', onclick: () => onAdjustSession(sug.sessionId, 'easy', sug.reason) }, 'Übernehmen'),
+      el('button', { type: 'button', class: 'ghost', onclick: () => { dismiss(sug.sessionId); renderSuggestion(); } }, 'Wie geplant')
+    ])
+  ]));
+}
+
+async function onAdjustSession(sessionId, action, reason) {
+  try {
+    const res = await fetch('/api/plan/adjust-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, action, reason })
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Unbekannter Fehler');
+    }
+    await refresh();
+  } catch (err) {
+    alert('Anpassung fehlgeschlagen: ' + err.message);
+  }
+}
+
 const MOON_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>';
 
 function planWeekInfo() {
@@ -641,6 +697,18 @@ function renderPlan() {
       ]);
     } else {
       chip = el('span', { class: 'small muted' }, 'geplant');
+    }
+    if (s.status === 'planned') {
+      const extra = s.adjusted
+        ? el('div', { class: 'adjust-row' }, [
+          el('span', { class: 'chip solid-muted' }, 'angepasst'),
+          el('button', { class: 'reset-btn', type: 'button', onclick: () => onAdjustSession(s.id, 'undo') },
+            `Rückgängig (${INTENSITY_LABELS[s.original && s.original.intensity] || ''} · ${s.original ? s.original.targetDurationMin : ''} min)`)
+        ])
+        : s.intensity && s.intensity !== 'easy'
+          ? el('button', { class: 'reset-btn', type: 'button', onclick: () => onAdjustSession(s.id, 'easy', 'Manuell auf locker gesetzt') }, 'Lockerer machen')
+          : null;
+      footer = footer ? el('div', {}, [footer, extra]) : extra;
     }
 
     sessionsBox.appendChild(el('div', { class: `session-row${isToday ? ' today' : ''}` }, [

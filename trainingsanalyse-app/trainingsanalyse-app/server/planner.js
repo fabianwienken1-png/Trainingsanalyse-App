@@ -283,4 +283,68 @@ function generateNextWeekPlan(store) {
   return store.plan;
 }
 
-module.exports = { generateNextWeekPlan, evaluatePreviousWeek };
+// ---------------------------------------------------------------------------
+// Tägliche Anpassung an die Erholung
+// ---------------------------------------------------------------------------
+
+// Liefert einen Vorschlag, die heutige (oder morgige) Einheit zu entschärfen,
+// wenn die Erholung eingeschränkt ist oder die letzte Nacht sehr kurz war und
+// eine harte Einheit ansteht. todayKey = 'YYYY-MM-DD' in Nutzer-Zeitzone.
+function suggestAdjustment(store, rec, todayKey) {
+  if (!rec || !store.plan || !Array.isArray(store.plan.sessions)) return null;
+  const session = store.plan.sessions.find(
+    (s) => s.day === todayKey && s.status === 'planned' && !s.adjusted && s.intensity !== 'easy'
+  );
+  if (!session) return null;
+  const shortNight = rec.lastNight && rec.lastNight.total < 6;
+  const trigger = rec.status === 'eingeschränkt' || (shortNight && session.intensity === 'hard');
+  if (!trigger) return null;
+  const easy = easyVersion(session);
+  const reason = rec.status === 'eingeschränkt'
+    ? `Deine Erholung ist eingeschränkt: ${rec.reasons.join(', ')}.`
+    : `Du hast letzte Nacht nur ${Math.floor(rec.lastNight.total)}:${String(Math.round((rec.lastNight.total % 1) * 60)).padStart(2, '0')} h geschlafen.`;
+  return {
+    sessionId: session.id,
+    sport: session.sport,
+    current: { intensity: session.intensity, durationMin: session.targetDurationMin, description: session.description },
+    proposed: { intensity: 'easy', durationMin: easy.targetDurationMin, description: easy.description },
+    reason
+  };
+}
+
+function easyVersion(session) {
+  const durationMin = Math.max(20, Math.round((session.targetDurationMin * 0.7) / 5) * 5);
+  return {
+    intensity: 'easy',
+    targetDurationMin: durationMin,
+    targetLoad: round1(durationMin * getIntensityFactor(session.sport, 'easy')),
+    description: describeSession(session.sport, 'easy')
+  };
+}
+
+// action: 'easy' (locker statt hart) oder 'undo' (ursprüngliche Einheit wiederherstellen)
+function adjustSession(store, sessionId, action, reason) {
+  const session = (store.plan.sessions || []).find((s) => s.id === sessionId);
+  if (!session) return { error: 'Einheit nicht gefunden (evtl. wurde inzwischen neu geplant).' };
+  if (action === 'easy') {
+    if (session.adjusted) return { session };
+    session.original = {
+      intensity: session.intensity,
+      targetDurationMin: session.targetDurationMin,
+      targetLoad: session.targetLoad,
+      description: session.description
+    };
+    Object.assign(session, easyVersion(session), { adjusted: true, adjustReason: reason || 'Angepasst wegen eingeschränkter Erholung' });
+    return { session };
+  }
+  if (action === 'undo') {
+    if (session.original) Object.assign(session, session.original);
+    delete session.original;
+    delete session.adjusted;
+    delete session.adjustReason;
+    return { session };
+  }
+  return { error: 'Unbekannte Aktion.' };
+}
+
+module.exports = { generateNextWeekPlan, evaluatePreviousWeek, suggestAdjustment, adjustSession };
