@@ -4,182 +4,243 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Trainingsanalyse</title>
-<meta name="description" content="Trainingsanalyse & adaptive Trainingspläne, verknüpft mit Strava." />
+<meta name="description" content="Trainingsanalyse & adaptive Trainingspläne." />
 
 <link rel="manifest" href="/manifest.json" />
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Training" />
-<meta name="theme-color" content="#2a78d6" />
+<meta name="theme-color" content="#0F1012" />
 <link rel="icon" href="/icons/icon-192.png" />
 
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" />
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
 
-<header class="app-header">
-  <h1>Trainingsanalyse</h1>
-  <div class="actions">
-    <button id="open-settings-btn" class="small">Einstellungen</button>
-  </div>
-</header>
+<div id="app-root">
 
-<main class="container" id="app-root">
-
-  <section class="card">
-    <h2>Apple Health · Kurzbefehl</h2>
-    <div id="health-import-status"></div>
-  </section>
-
-  <section class="card">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-      <h2 style="margin:0;">Strava <span class="muted" style="text-transform:none; font-weight:400;">(optional, kostenpflichtig)</span></h2>
-    </div>
-    <div id="strava-status"></div>
-  </section>
-
-  <div id="stat-grid" class="stat-grid"></div>
-
-  <section class="card">
-    <h2>Auffälligkeiten</h2>
-    <div id="flags"></div>
-  </section>
-
-  <section class="card">
-    <h2>Tägliche Trainingslast (28 Tage)</h2>
-    <div id="load-chart"></div>
-  </section>
-
-  <section class="card">
-    <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; margin-bottom:12px;">
+  <!-- ============ HEUTE ============ -->
+  <section class="view" id="view-heute" data-view="heute">
+    <header class="view-header">
       <div>
-        <h2 style="margin-bottom:2px;">Trainingsplan</h2>
-        <div id="plan-week-label" class="muted"></div>
+        <div class="eyebrow" id="today-label"></div>
+        <h1>Heute</h1>
       </div>
-      <button id="regenerate-plan-btn" class="small">Neue Woche planen</button>
+      <button class="icon-btn" id="open-settings-btn" type="button" aria-label="Einstellungen">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </header>
+    <div class="view-body">
+      <div id="form-card"></div>
+      <div id="stat-tiles" class="tiles"></div>
+      <div id="week-card"></div>
+      <div id="next-session"></div>
+      <div id="sync-line"></div>
     </div>
-    <div id="plan-reason"></div>
-    <div id="plan-sessions" class="session-list"></div>
   </section>
 
-  <section class="card">
-    <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; margin-bottom:12px;">
-      <h2 style="margin:0;">Letzte Aktivitäten</h2>
-      <button id="open-add-activity-btn" class="small" type="button">+ Aktivität hinzufügen</button>
+  <!-- ============ PLAN ============ -->
+  <section class="view" id="view-plan" data-view="plan" hidden>
+    <header class="view-header">
+      <div>
+        <div class="eyebrow" id="plan-week-label"></div>
+        <h1>Plan</h1>
+      </div>
+      <button class="pill-btn" id="regenerate-plan-btn" type="button">Neue Woche planen</button>
+    </header>
+    <div class="view-body">
+      <div id="plan-summary"></div>
+      <div id="plan-sessions" class="session-list"></div>
     </div>
-    <div class="filter-row">
-      <input id="activity-search" type="text" placeholder="Suche nach Name oder Sportart..." />
-      <select id="activity-sport-filter">
-        <option value="">Alle Sportarten</option>
-        <option value="Run">Laufen</option>
-        <option value="TrailRun">Trail-Laufen</option>
-        <option value="Ride">Radfahren</option>
-        <option value="VirtualRide">Rad (virtuell)</option>
-        <option value="Swim">Schwimmen</option>
-        <option value="WeightTraining">Krafttraining</option>
-        <option value="Walk">Gehen</option>
-        <option value="Hike">Wandern</option>
-        <option value="Yoga">Yoga</option>
-        <option value="Workout">Workout</option>
-      </select>
-    </div>
-    <div id="activities-table"></div>
-    <div id="activities-loadmore" style="margin-top:12px; text-align:center;"></div>
   </section>
 
-</main>
+  <!-- ============ AKTIVITÄTEN ============ -->
+  <section class="view" id="view-aktivitaeten" data-view="aktivitaeten" hidden>
+    <header class="view-header">
+      <div>
+        <div class="eyebrow" id="activity-count-label"></div>
+        <h1>Aktivitäten</h1>
+      </div>
+      <button class="icon-btn accent" id="open-add-activity-btn" type="button" aria-label="Aktivität hinzufügen">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </header>
+    <div class="view-body">
+      <label class="search-field">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="activity-search" type="search" placeholder="Suchen" aria-label="Aktivitäten durchsuchen" autocomplete="off" />
+      </label>
+      <div class="chip-row" id="sport-chips" role="group" aria-label="Nach Sportart filtern"></div>
+      <div id="activities-list"></div>
+      <div id="activities-loadmore" class="center"></div>
+    </div>
+  </section>
 
-<dialog id="settings-dialog">
-  <div class="dialog-header">
-    <h3>Einstellungen</h3>
-    <button class="small" id="close-settings-btn" type="button">Schließen</button>
+  <!-- ============ ANALYSE ============ -->
+  <section class="view" id="view-analyse" data-view="analyse" hidden>
+    <header class="view-header">
+      <div>
+        <div class="eyebrow">Belastung &amp; Verlauf</div>
+        <h1>Analyse</h1>
+      </div>
+    </header>
+    <div class="view-body">
+      <div class="card">
+        <div class="card-head"><h2>Tägliche Trainingslast</h2><span class="muted small">28 Tage</span></div>
+        <div id="load-chart"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Umfang pro Woche</h2><span class="muted small">8 Wochen · Stunden</span></div>
+        <div id="volume-chart"></div>
+        <div class="legend" id="volume-legend"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Auffälligkeiten</h2></div>
+        <div id="flags"></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<nav class="tabbar" aria-label="Hauptnavigation">
+  <a href="#heute" data-tab="heute">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 12l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Heute
+  </a>
+  <a href="#plan" data-tab="plan">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+    Plan
+  </a>
+  <a href="#aktivitaeten" data-tab="aktivitaeten">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+    Aktivitäten
+  </a>
+  <a href="#analyse" data-tab="analyse">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+    Analyse
+  </a>
+</nav>
+
+<!-- ============ EINSTELLUNGEN ============ -->
+<dialog id="settings-dialog" class="sheet">
+  <div class="sheet-header">
+    <h2>Einstellungen</h2>
+    <button class="pill-btn" id="close-settings-btn" type="button">Fertig</button>
   </div>
-  <form id="settings-form" class="dialog-body">
-    <div class="form-row">
-      <label for="setting-maxhr">Maximale Herzfrequenz (Schläge/Min)</label>
-      <input id="setting-maxhr" type="number" min="100" max="230" placeholder="z.B. 190" />
+  <div class="sheet-body">
+
+    <h3 class="section-title">Athlet</h3>
+    <form id="settings-form" class="card form-card">
+      <div class="form-row">
+        <label for="setting-maxhr">Maximalpuls</label>
+        <input id="setting-maxhr" type="number" inputmode="numeric" min="100" max="230" placeholder="z.B. 190" />
+      </div>
+      <div class="form-row">
+        <label for="setting-restinghr">Ruhepuls</label>
+        <input id="setting-restinghr" type="number" inputmode="numeric" min="30" max="100" placeholder="z.B. 52" />
+      </div>
+      <div class="form-row">
+        <label for="setting-gender">Geschlecht (für die Trainingslast-Formel)</label>
+        <select id="setting-gender">
+          <option value="unspecified">Nicht angegeben</option>
+          <option value="male">Männlich</option>
+          <option value="female">Weiblich</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="setting-cap">Max. Steigerung pro Woche (%)</label>
+        <input id="setting-cap" type="number" inputmode="numeric" min="0" max="30" />
+      </div>
+      <div class="form-row">
+        <label for="setting-deload">Entlastungswoche alle N Wochen</label>
+        <input id="setting-deload" type="number" inputmode="numeric" min="2" max="8" />
+      </div>
+      <div class="form-row">
+        <label for="setting-sessions">Einheiten pro Woche (Startwert ohne Historie)</label>
+        <input id="setting-sessions" type="number" inputmode="numeric" min="1" max="10" />
+      </div>
+      <p class="muted small">Ohne Maximal- und Ruhepuls wird die Trainingslast grob über Sportart und Dauer geschätzt.</p>
+      <button type="submit" class="primary-btn">Speichern</button>
+    </form>
+
+    <h3 class="section-title">Datenimport · Health Auto Export</h3>
+    <div class="card" id="health-import-status"></div>
+
+    <h3 class="section-title">Strava <span class="muted">(optional)</span></h3>
+    <div class="card" id="strava-status"></div>
+
+    <h3 class="section-title">Daten</h3>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">Lädt alle Trainingsdaten als JSON-Datei herunter.</p>
+      <button type="button" class="secondary-btn" id="export-backup-btn">Backup exportieren</button>
     </div>
-    <div class="form-row">
-      <label for="setting-restinghr">Ruhepuls (Schläge/Min)</label>
-      <input id="setting-restinghr" type="number" min="30" max="100" placeholder="z.B. 52" />
-    </div>
-    <div class="form-row">
-      <label for="setting-gender">Geschlecht (für Trainingslast-Formel)</label>
-      <select id="setting-gender">
-        <option value="unspecified">Nicht angegeben</option>
-        <option value="male">Männlich</option>
-        <option value="female">Weiblich</option>
-      </select>
-    </div>
-    <div class="form-row">
-      <label for="setting-cap">Max. wöchentliche Belastungssteigerung (%)</label>
-      <input id="setting-cap" type="number" min="0" max="30" />
-    </div>
-    <div class="form-row">
-      <label for="setting-deload">Deload-Woche alle N Wochen</label>
-      <input id="setting-deload" type="number" min="2" max="8" />
-    </div>
-    <div class="form-row">
-      <label for="setting-sessions">Standard-Einheiten pro Woche (Startwert, ohne Historie)</label>
-      <input id="setting-sessions" type="number" min="1" max="10" />
-    </div>
-    <p class="muted">
-      Hinweis: Ohne Maximalpuls &amp; Ruhepuls wird die Trainingslast über eine grobe
-      Schätzung nach Sportart und Dauer berechnet statt über Herzfrequenz.
-    </p>
-    <div class="dialog-actions" style="justify-content: space-between;">
-      <button type="button" class="small" id="export-backup-btn">Backup exportieren</button>
-      <button type="submit" class="primary">Speichern</button>
+  </div>
+</dialog>
+
+<!-- ============ AKTIVITÄT HINZUFÜGEN ============ -->
+<dialog id="add-activity-dialog" class="sheet">
+  <div class="sheet-header">
+    <h2>Aktivität hinzufügen</h2>
+    <button class="pill-btn" id="close-add-activity-btn" type="button">Abbrechen</button>
+  </div>
+  <form id="add-activity-form" class="sheet-body">
+    <div class="card form-card">
+      <div class="form-row">
+        <label for="activity-name">Name (optional)</label>
+        <input id="activity-name" type="text" placeholder="z.B. Krafttraining Studio" />
+      </div>
+      <div class="form-row">
+        <label for="activity-type">Sportart</label>
+        <select id="activity-type">
+          <option value="Swim">Schwimmen</option>
+          <option value="Ride">Radfahren</option>
+          <option value="VirtualRide">Rad (indoor)</option>
+          <option value="Run">Laufen</option>
+          <option value="TrailRun">Trail-Laufen</option>
+          <option value="WeightTraining">Krafttraining</option>
+          <option value="Walk">Gehen</option>
+          <option value="Hike">Wandern</option>
+          <option value="Yoga">Yoga</option>
+          <option value="Workout">Workout (allgemein)</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="activity-date">Datum &amp; Uhrzeit</label>
+        <input id="activity-date" type="datetime-local" required />
+      </div>
+      <div class="form-row">
+        <label for="activity-duration">Dauer (Minuten)</label>
+        <input id="activity-duration" type="number" inputmode="numeric" min="1" max="600" required />
+      </div>
+      <div class="form-row">
+        <label for="activity-distance">Distanz in km (optional)</label>
+        <input id="activity-distance" type="number" inputmode="decimal" min="0" step="0.1" />
+      </div>
+      <div class="form-row">
+        <label for="activity-hr">Ø Herzfrequenz (optional)</label>
+        <input id="activity-hr" type="number" inputmode="numeric" min="60" max="220" />
+      </div>
+      <button type="submit" class="primary-btn">Speichern</button>
     </div>
   </form>
 </dialog>
 
-<dialog id="add-activity-dialog">
-  <div class="dialog-header">
-    <h3>Aktivität hinzufügen</h3>
-    <button class="small" id="close-add-activity-btn" type="button">Schließen</button>
+<!-- ============ AKTIVITÄT DETAIL ============ -->
+<dialog id="activity-detail-dialog" class="sheet sheet-small">
+  <div class="sheet-header">
+    <h2 id="activity-detail-title">Aktivität</h2>
+    <button class="pill-btn" id="close-activity-detail-btn" type="button">Schließen</button>
   </div>
-  <form id="add-activity-form" class="dialog-body">
-    <div class="form-row">
-      <label for="activity-name">Name (optional)</label>
-      <input id="activity-name" type="text" placeholder="z.B. Krafttraining Studio" />
-    </div>
-    <div class="form-row">
-      <label for="activity-type">Sportart</label>
-      <select id="activity-type">
-        <option value="Run">Laufen</option>
-        <option value="TrailRun">Trail-Laufen</option>
-        <option value="Ride">Radfahren</option>
-        <option value="VirtualRide">Rad (virtuell)</option>
-        <option value="Swim">Schwimmen</option>
-        <option value="WeightTraining">Krafttraining</option>
-        <option value="Walk">Gehen</option>
-        <option value="Hike">Wandern</option>
-        <option value="Yoga">Yoga</option>
-        <option value="Workout">Workout (allgemein)</option>
-      </select>
-    </div>
-    <div class="form-row">
-      <label for="activity-date">Datum &amp; Uhrzeit</label>
-      <input id="activity-date" type="datetime-local" required />
-    </div>
-    <div class="form-row">
-      <label for="activity-duration">Dauer (Minuten)</label>
-      <input id="activity-duration" type="number" min="1" max="600" required />
-    </div>
-    <div class="form-row">
-      <label for="activity-distance">Distanz (km, optional)</label>
-      <input id="activity-distance" type="number" min="0" step="0.1" />
-    </div>
-    <div class="form-row">
-      <label for="activity-hr">Ø Herzfrequenz (optional)</label>
-      <input id="activity-hr" type="number" min="60" max="220" />
-    </div>
-    <div class="dialog-actions">
-      <button type="submit" class="primary">Speichern</button>
-    </div>
-  </form>
+  <div class="sheet-body">
+    <div class="card" id="activity-detail-body"></div>
+    <button type="button" class="danger-btn" id="delete-activity-btn">Aktivität löschen</button>
+  </div>
 </dialog>
 
 <script src="/js/charts.js"></script>
