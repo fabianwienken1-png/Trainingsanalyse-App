@@ -253,7 +253,7 @@ function renderToday() {
   const markerPos = acwr === null ? null : Math.min(100, (acwr / 2) * 100);
   mount('form-card', el('div', { class: 'card form-status' }, [
     el('div', { class: 'card-head', style: 'margin:0' }, [
-      el('h2', {}, 'Formstatus'),
+      el('div', { class: 'head-with-info' }, [el('h2', {}, 'Formstatus'), infoButton('acwr', 'Formstatus')]),
       el('span', { class: `chip ${fs.chip}` }, fs.label)
     ]),
     el('div', { class: 'big-row' }, [
@@ -278,17 +278,17 @@ function renderToday() {
   const weekSec = weekActs.reduce((s, x) => s + (x.movingTimeSec || 0), 0);
   mount('stat-tiles',
     el('div', { class: 'tile' }, [
-      el('div', { class: 'label' }, 'Wochenlast'),
+      tileLabel('Wochenlast', 'wochenlast'),
       el('div', { class: 'value' }, String(Math.round(a.acwr.acute7))),
       el('div', { class: 'sub' }, 'letzte 7 Tage')
     ]),
     el('div', { class: 'tile' }, [
-      el('div', { class: 'label' }, 'Diese Woche'),
+      tileLabel('Woche', 'woche'),
       el('div', { class: 'value' }, fmtDuration(weekSec).replace(' h', '').replace(' min', '′')),
       el('div', { class: 'sub' }, `${weekSec >= 3600 ? 'Std · ' : ''}${weekActs.length} ${weekActs.length === 1 ? 'Einheit' : 'Einh.'}`)
     ]),
     el('div', { class: 'tile' }, [
-      el('div', { class: 'label' }, 'Monotonie'),
+      tileLabel('Monotonie', 'monotonie'),
       el('div', { class: 'value' }, fmtNum(a.monotonyStrain.monotony, 1)),
       el('div', { class: 'sub' }, `Strain ${Math.round(a.monotonyStrain.strain)}`)
     ])
@@ -354,6 +354,89 @@ function renderToday() {
         : 'Noch kein Import – richte ihn in den Einstellungen ein.'
     ]));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Erklärungen zu den Kennzahlen (Info-Buttons)
+// ---------------------------------------------------------------------------
+
+const INFO_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5v.01"/></svg>';
+
+function infoButton(key, label) {
+  return el('button', {
+    class: 'info-btn', type: 'button', 'aria-label': `Erklärung: ${label}`,
+    html: INFO_ICON, onclick: () => openInfo(key)
+  });
+}
+
+function tileLabel(text, key) {
+  return el('div', { class: 'label label-row' }, [el('span', {}, text), infoButton(key, text)]);
+}
+
+function infoContent(key) {
+  const a = currentState.analysis;
+  const acwr = a.acwr.acwr;
+  const mono = a.monotonyStrain.monotony;
+  const strain = Math.round(a.monotonyStrain.strain);
+  const acute = Math.round(a.acwr.acute7);
+  const chronic = Math.round(a.acwr.chronicWeekly || 0);
+  switch (key) {
+    case 'acwr':
+      return {
+        title: 'Formstatus (ACWR)',
+        paras: [
+          'Das Belastungsverhältnis (Acute:Chronic Workload Ratio) vergleicht deine Trainingslast der letzten 7 Tage mit deinem Wochenschnitt der letzten 4 Wochen.',
+          'Unter 0,8: du trainierst weniger als gewohnt, die Form kann nachlassen. 0,8–1,3: optimaler Bereich. 1,3–1,5: du steigerst schnell, achte auf Erholung. Über 1,5: deutlich erhöhtes Verletzungsrisiko.'
+        ],
+        current: acwr === null
+          ? 'Für eine verlässliche Einschätzung fehlt noch Trainingshistorie (mindestens 14 Tage).'
+          : `Aktuell ${fmtNum(acwr, 2)}: ${acute} Punkte in den letzten 7 Tagen gegenüber durchschnittlich ${chronic} Punkten pro Woche in den letzten 4 Wochen.`
+      };
+    case 'wochenlast':
+      return {
+        title: 'Wochenlast',
+        paras: [
+          'Die Summe der Trainingslast-Punkte der letzten 7 Tage. Jede Einheit bekommt Punkte aus Dauer und Intensität: Mit Puls (Ø-Herzfrequenz im Verhältnis zu Ruhe- und Maximalpuls) wird nach der TRIMP-Methode gerechnet, ohne Puls grob nach Sportart und Dauer geschätzt.',
+          '60 Minuten locker ergeben deutlich weniger Punkte als 60 Minuten hart. So lassen sich unterschiedliche Sportarten und Intensitäten vergleichen.'
+        ],
+        current: `Aktuell ${acute} Punkte. Dein Wochenschnitt der letzten 4 Wochen liegt bei ${chronic} Punkten.`
+      };
+    case 'woche':
+      return {
+        title: 'Diese Woche',
+        paras: [
+          'Die reine Trainingszeit und die Zahl der Einheiten in der laufenden Kalenderwoche (Montag bis Sonntag).',
+          'Anders als die Wochenlast berücksichtigt dieser Wert keine Intensität – eine Stunde lockeres Radeln zählt hier genauso viel wie eine Stunde Intervalle.'
+        ],
+        current: null
+      };
+    case 'monotonie':
+      return {
+        title: 'Monotonie & Strain',
+        paras: [
+          'Monotonie zeigt, wie gleichmäßig deine Belastung über die letzten 7 Tage verteilt ist (Ø-Tageslast geteilt durch die Schwankung). Über 2: jeder Tag ist ähnlich belastend, ohne echte leichte Tage – das erhöht das Risiko für Übertraining und Infekte. Gut ist etwa 1–1,5: harte und leichte Tage wechseln sich ab.',
+          'Strain ist die Gesamtbeanspruchung der Woche: Wochenlast × Monotonie. Viel Training und wenig Abwechslung ergeben einen hohen Strain. Am aussagekräftigsten im Vergleich mit deinen eigenen Wochen – steigt er stark an, plane Erholung ein.'
+        ],
+        current: `Aktuell Monotonie ${fmtNum(mono, 1)} und Strain ${strain}. ` + (mono > 2
+          ? 'Deine Belastung ist sehr gleichförmig – bau bewusst leichtere Tage ein.'
+          : mono < 1
+            ? 'Wenige Einheiten mit Ruhetagen dazwischen – unkritisch.'
+            : 'Gute Abwechslung zwischen härteren und leichteren Tagen.')
+      };
+    default:
+      return null;
+  }
+}
+
+function openInfo(key) {
+  const info = infoContent(key);
+  if (!info) return;
+  document.getElementById('info-title').textContent = info.title;
+  mount('info-body',
+    ...info.paras.map((t) => el('p', { class: 'info-text' }, t)),
+    info.current ? el('div', { class: 'info-current' }, info.current) : null
+  );
+  document.getElementById('info-dialog').showModal();
 }
 
 function planWeekInfo() {
@@ -680,6 +763,9 @@ function setupActivityUi() {
       renderActivities();
     }, 200);
   });
+  const infoDialog = document.getElementById('info-dialog');
+  document.getElementById('close-info-btn').addEventListener('click', () => infoDialog.close());
+  infoDialog.addEventListener('click', (e) => { if (e.target === infoDialog) infoDialog.close(); });
   const detail = document.getElementById('activity-detail-dialog');
   document.getElementById('close-activity-detail-btn').addEventListener('click', () => detail.close());
   document.getElementById('delete-activity-btn').addEventListener('click', onDeleteActivity);
