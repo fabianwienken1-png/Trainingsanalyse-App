@@ -870,6 +870,7 @@ function setupSettingsDialog() {
   const dialog = document.getElementById('settings-dialog');
   document.getElementById('open-settings-btn').addEventListener('click', openSettings);
   document.getElementById('close-settings-btn').addEventListener('click', () => dialog.close());
+  document.getElementById('dedupe-btn').addEventListener('click', onCheckDuplicates);
   document.getElementById('export-backup-btn').addEventListener('click', () => {
     window.location.href = '/api/backup';
   });
@@ -901,6 +902,49 @@ function setupSettingsDialog() {
       alert('Speichern fehlgeschlagen: ' + err.message);
     }
   });
+}
+
+async function onCheckDuplicates() {
+  const box = document.getElementById('dedupe-result');
+  box.innerHTML = '';
+  let data;
+  try {
+    data = await fetchJson('/api/activities/duplicates', 'Prüfung fehlgeschlagen');
+  } catch (err) {
+    alert(err.message);
+    return;
+  }
+  if (!data.count) {
+    box.appendChild(el('p', { class: 'muted small', style: 'margin-bottom:0' }, 'Keine doppelten Einträge gefunden.'));
+    return;
+  }
+  const doubles = data.items.filter((i) => i.reason === 'doppelt').length;
+  const short = data.count - doubles;
+  const summary = [doubles ? `${doubles} doppelt` : null, short ? `${short} unter 1 Minute` : null].filter(Boolean).join(', ');
+  const list = el('div', { style: 'display:flex;flex-direction:column;gap:6px;margin:12px 0' },
+    data.items.slice(0, 50).map((i) => el('div', { class: 'small', style: 'display:flex;justify-content:space-between;gap:8px' }, [
+      el('span', {}, `${activityTitle(i.activity)} · ${fmtWhen(i.activity.startDate)}`),
+      el('span', { class: 'muted' }, i.reason === 'doppelt' ? fmtDuration(i.activity.movingTimeSec) : 'zu kurz')
+    ])));
+  box.appendChild(el('p', { class: 'small', style: 'margin-bottom:0' }, `${data.count} ${data.count === 1 ? 'Eintrag' : 'Einträge'} gefunden (${summary}). Vom jeweiligen Doppel bleibt der Eintrag mit den vollständigeren Daten erhalten.`));
+  box.appendChild(list);
+  if (data.count > 50) box.appendChild(el('p', { class: 'muted small' }, `… und ${data.count - 50} weitere`));
+  box.appendChild(el('button', {
+    class: 'primary-btn', type: 'button',
+    onclick: async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const res = await fetch('/api/activities/dedupe', { method: 'POST' });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Unbekannter Fehler');
+        box.innerHTML = '';
+        box.appendChild(el('p', { class: 'small', style: 'margin-bottom:0;color:var(--good)' }, `${body.removed} ${body.removed === 1 ? 'Eintrag' : 'Einträge'} entfernt ✓`));
+        await refresh();
+      } catch (err) {
+        alert('Bereinigung fehlgeschlagen: ' + err.message);
+      }
+    }
+  }, `${data.count === 1 ? 'Eintrag' : data.count + ' Einträge'} entfernen`));
 }
 
 function numOrNull(v) {

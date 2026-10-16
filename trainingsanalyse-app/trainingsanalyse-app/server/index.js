@@ -25,6 +25,7 @@ const analysis = require('./analysis');
 const planner = require('./planner');
 const healthImport = require('./health-import');
 const healthAutoExport = require('./health-auto-export');
+const dedupe = require('./dedupe');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -231,7 +232,7 @@ route('GET', '/api/activities', async (req, res, urlObj) => {
   const s = await loadStore();
   const q = (urlObj.searchParams.get('q') || '').trim().toLowerCase();
   const sport = urlObj.searchParams.get('sport') || '';
-  const limit = Math.min(500, Math.max(1, Number(urlObj.searchParams.get('limit')) || 200));
+  const limit = Math.min(5000, Math.max(1, Number(urlObj.searchParams.get('limit')) || 200));
   let list = s.activities;
   if (sport) {
     list = list.filter((a) => a.type === sport);
@@ -293,6 +294,25 @@ route('POST', '/api/plan/session-status', async (req, res) => {
   sendJson(res, 200, { plan: s.plan });
 });
 
+// Doppelte/versehentliche Einträge (siehe dedupe.js): GET zeigt eine Vorschau,
+// POST entfernt sie. Beim Import läuft dieselbe Bereinigung automatisch.
+route('GET', '/api/activities/duplicates', async (req, res) => {
+  const s = await loadStore();
+  const removals = dedupe.findRemovals(s.activities);
+  sendJson(res, 200, {
+    count: removals.length,
+    items: removals.map((r) => ({ reason: r.reason, keptId: r.keptId, activity: r.activity }))
+  });
+});
+
+route('POST', '/api/activities/dedupe', async (req, res) => {
+  const s = await loadStore();
+  const removals = dedupe.removeDuplicates(s);
+  if (removals.length) await saveStore(s);
+  console.log(`[dedupe] ${removals.length} Eintrag/Einträge manuell bereinigt.`);
+  sendJson(res, 200, { removed: removals.length, total: s.activities.length });
+});
+
 // Löscht eine einzelne Aktivität (z.B. Test-Trainings, die man in Health/Strava
 // zwar entfernt hat, die aber - da unser Import rein additiv ist, siehe
 // health-import.js/health-auto-export.js - sonst für immer in der App
@@ -339,6 +359,7 @@ route('POST', '/api/import/health', async (req, res, urlObj) => {
 
   const normalized = healthImport.normalizeHealthPayload(body);
   healthImport.mergeHealthActivity(s, normalized);
+  dedupe.removeDuplicates(s);
   s.appleHealth.lastImportAt = new Date().toISOString();
   s.appleHealth.importCount = (s.appleHealth.importCount || 0) + 1;
   await saveStore(s);
@@ -379,6 +400,12 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
   // die Trainingslast-Berechnung ab dem nächsten Sync spürbar genauer.
   const athleteDefaults = healthAutoExport.deriveAthleteDefaults(s, body);
 
+  // Doppelt erfasste Workouts (z.B. Watch + Strava-Kopie) direkt aussortieren
+  const deduped = result.imported.length > 0 ? dedupe.removeDuplicates(s) : [];
+  if (deduped.length) {
+    console.log(`[dedupe] ${deduped.length} doppelte/zu kurze Einträge beim Import entfernt.`);
+  }
+
   if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0) {
     await saveStore(s);
   }
@@ -398,6 +425,7 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
     totalWorkouts: result.totalWorkouts,
     imported: result.imported.length,
     skipped: result.skipped.length,
+    duplicatesRemoved: deduped.length,
     athleteDefaultsSet: athleteDefaults,
     activities: result.imported
   });

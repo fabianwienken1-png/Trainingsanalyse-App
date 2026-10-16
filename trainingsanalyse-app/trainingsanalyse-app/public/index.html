@@ -176,9 +176,16 @@
     <div class="card" id="strava-status"></div>
 
     <h3 class="section-title">Daten</h3>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">Lädt alle Trainingsdaten als JSON-Datei herunter.</p>
-      <button type="button" class="secondary-btn" id="export-backup-btn">Backup exportieren</button>
+    <div class="card form-card">
+      <div>
+        <p class="muted small" style="margin-top:0">Findet Trainings, die doppelt erfasst wurden (z.B. Watch und Strava) oder nur wenige Sekunden lang sind. Neue Duplikate werden beim Import automatisch aussortiert.</p>
+        <button type="button" class="secondary-btn" id="dedupe-btn">Doppelte Einträge prüfen</button>
+        <div id="dedupe-result"></div>
+      </div>
+      <div>
+        <p class="muted small" style="margin-top:0">Lädt alle Trainingsdaten als JSON-Datei herunter.</p>
+        <button type="button" class="secondary-btn" id="export-backup-btn">Backup exportieren</button>
+      </div>
     </div>
   </div>
 </dialog>
