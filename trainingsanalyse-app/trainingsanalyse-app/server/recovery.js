@@ -35,9 +35,29 @@ function dayOf(raw) {
   return m ? m[1] : null;
 }
 
+function normName(n) {
+  return String(n || '').toLowerCase().replace(/[^a-z]+/g, '_').replace(/^_|_$/g, '');
+}
+
+function extractMetrics(body) {
+  if (body && body.data && Array.isArray(body.data.metrics)) return body.data.metrics;
+  if (body && Array.isArray(body.metrics)) return body.metrics;
+  return [];
+}
+
 function findMetric(body, names) {
-  const metrics = body && body.data && Array.isArray(body.data.metrics) ? body.data.metrics : [];
-  return metrics.find((m) => m && names.includes(m.name)) || null;
+  const wanted = names.map(normName);
+  return extractMetrics(body).find((m) => m && wanted.includes(normName(m.name))) || null;
+}
+
+// Kurze Zusammenfassung des letzten Gesundheitsdaten-Payloads (zur Fehlersuche)
+function describePayload(body) {
+  return extractMetrics(body).map((m) => ({
+    name: m && m.name,
+    units: m && m.units,
+    points: m && Array.isArray(m.data) ? m.data.length : 0,
+    sampleKeys: m && Array.isArray(m.data) && m.data[0] ? Object.keys(m.data[0]) : []
+  }));
 }
 
 function parseSleep(metric) {
@@ -47,8 +67,12 @@ function parseSleep(metric) {
   // Variante 1: zusammengefasst – ein Eintrag pro Nacht
   for (const d of metric.data) {
     if (!d || d.value) continue; // Einzelphasen weiter unten
-    const total = isNum(d.totalSleep) ? d.totalSleep : isNum(d.asleep) ? d.asleep : null;
-    const day = dayOf(d.date) || dayOf(d.sleepEnd);
+    const stages = (isNum(d.core) ? d.core : 0) + (isNum(d.deep) ? d.deep : 0) + (isNum(d.rem) ? d.rem : 0);
+    const total = isNum(d.totalSleep) && d.totalSleep > 0 ? d.totalSleep
+      : isNum(d.asleep) && d.asleep > 0 ? d.asleep
+        : stages > 0 ? stages
+          : isNum(d.qty) && d.qty > 0 ? d.qty : null;
+    const day = dayOf(d.sleepEnd) || dayOf(d.date) || dayOf(d.endDate);
     if (!day || !isNum(total) || total <= 0) continue;
     const entry = {
       total: round(total),
@@ -112,10 +136,18 @@ function prune(map) {
 // Gibt die Anzahl übernommener Tage je Metrik zurück.
 function mergeHealthMetrics(store, body) {
   const sleep = parseSleep(findMetric(body, ['sleep_analysis']));
-  const hrv = parseDaily(findMetric(body, ['heart_rate_variability', 'heart_rate_variability_sdnn']));
+  const hrv = parseDaily(findMetric(body, ['heart_rate_variability', 'heart_rate_variability_sdnn', 'hrv']));
   const rhr = parseDaily(findMetric(body, ['resting_heart_rate']));
   const counts = { sleep: Object.keys(sleep).length, hrv: Object.keys(hrv).length, restingHR: Object.keys(rhr).length };
-  if (!counts.sleep && !counts.hrv && !counts.restingHR) return counts;
+  const metrics = extractMetrics(body);
+  if (metrics.length) {
+    store.health = store.health || {};
+    store.health.lastPayload = { at: new Date().toISOString(), metrics: describePayload(body), parsed: counts };
+  }
+  if (!counts.sleep && !counts.hrv && !counts.restingHR) {
+    counts.payloadOnly = metrics.length > 0;
+    return counts;
+  }
 
   store.health = store.health || {};
   store.health.sleep = Object.assign(store.health.sleep || {}, sleep);

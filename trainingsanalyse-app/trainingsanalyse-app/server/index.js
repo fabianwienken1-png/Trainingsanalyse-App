@@ -316,6 +316,17 @@ route('GET', '/api/activities/duplicates', async (req, res) => {
   });
 });
 
+// Diagnose: was kam zuletzt an Gesundheitsdaten an (Metrik-Namen, Anzahl, Feldnamen)?
+route('GET', '/api/health-metrics/status', async (req, res) => {
+  const s = await loadStore();
+  const h = s.health || {};
+  sendJson(res, 200, {
+    lastImportAt: h.lastImportAt || null,
+    days: { sleep: Object.keys(h.sleep || {}).length, hrv: Object.keys(h.hrv || {}).length, restingHR: Object.keys(h.restingHR || {}).length },
+    lastPayload: h.lastPayload || null
+  });
+});
+
 route('POST', '/api/activities/dedupe', async (req, res) => {
   const s = await loadStore();
   const removals = dedupe.removeDuplicates(s);
@@ -413,7 +424,10 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
 
   // Schlaf / HRV / Ruhepuls (zweite Automation mit Datentyp "Gesundheitsmetriken")
   const metricCounts = recovery.mergeHealthMetrics(s, body);
-  const metricsMerged = metricCounts.sleep + metricCounts.hrv + metricCounts.restingHR > 0;
+  const metricsMerged = metricCounts.sleep + metricCounts.hrv + metricCounts.restingHR > 0 || !!metricCounts.payloadOnly;
+  if (metricCounts.payloadOnly) {
+    console.log('[health-auto-export] Gesundheitsmetriken empfangen, aber nichts erkannt:', JSON.stringify(s.health.lastPayload.metrics));
+  }
   if (metricsMerged) {
     console.log(`[health-auto-export] Gesundheitsdaten übernommen: ${metricCounts.sleep} Nächte Schlaf, ${metricCounts.hrv} Tage HRV, ${metricCounts.restingHR} Tage Ruhepuls.`);
   }
