@@ -15,6 +15,7 @@
 //     Trainingshistorie der letzten 8 Wochen (aus Strava/Apple Fitness importiert).
 
 const analysis = require('./analysis');
+const recovery = require('./recovery');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -150,6 +151,10 @@ function decideMultiplierAndReason(store, weekIndex, acwr, completionRate) {
   if (acwr.acwr !== null && acwr.acwr > 1.3) {
     return { multiplier: 0.95, reason: 'ACWR leicht erhöht – Belastung wird gehalten statt weiter gesteigert.' };
   }
+  const rec = recovery.computeRecovery(store.health);
+  if (rec && rec.status === 'eingeschränkt') {
+    return { multiplier: 0.9, reason: `Erholung eingeschränkt – ${rec.reasons.join('; ')}. Die Belastung wird leicht reduziert: mehr Schlaf bringt jetzt mehr als mehr Training.` };
+  }
   if (completionRate !== null && completionRate < 70) {
     return { multiplier: 1.0, reason: `Nur ${completionRate}% der letzten Woche geplanten Einheiten absolviert – Zielbelastung bleibt konstant statt zu steigen.` };
   }
@@ -271,7 +276,8 @@ function generateNextWeekPlan(store) {
     isDeload,
     reason,
     acwr: report.acwr,
-    completionRate
+    completionRate,
+    recovery: recovery.computeRecovery(store.health)
   };
 
   return store.plan;

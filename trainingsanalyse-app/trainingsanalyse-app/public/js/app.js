@@ -272,6 +272,8 @@ function renderToday() {
     ])
   ]));
 
+  renderRecovery();
+
   // Kennzahlen dieser Woche (lokale Kalenderwoche, Mo–So)
   const weekStart = startOfLocalWeek(now);
   const weekActs = activitiesInRange(weekStart, addDays(weekStart, 7));
@@ -423,6 +425,20 @@ function infoContent(key) {
             ? 'Wenige Einheiten mit Ruhetagen dazwischen – unkritisch.'
             : 'Gute Abwechslung zwischen härteren und leichteren Tagen.')
       };
+    case 'erholung': {
+      const rec = currentState.recovery;
+      return {
+        title: 'Erholung',
+        paras: [
+          'Schlaf ist der wichtigste Erholungsfaktor: Im Tiefschlaf repariert der Körper Muskeln und baut Trainingsreize in Leistung um. Ausdauersportler brauchen meist 7–9 Stunden.',
+          'Die Einschätzung kombiniert deinen Schlaf der letzten 7 Nächte, die letzte Nacht und – falls vorhanden – Herzfrequenzvariabilität (HRV) und Ruhepuls im Vergleich zu deinem eigenen 4-Wochen-Schnitt. Eine niedrige HRV oder ein erhöhter Ruhepuls deuten auf Ermüdung, Stress oder einen beginnenden Infekt hin.',
+          'Bei eingeschränkter Erholung reduziert der Wochenplan die Belastung automatisch leicht.'
+        ],
+        current: !rec ? null : rec.reasons.length
+          ? `Aktuell: ${rec.reasons.join(', ')}.`
+          : `Aktuell keine Auffälligkeiten${rec.sleepAvg7 !== null ? ` – Ø ${fmtHours(rec.sleepAvg7)} h Schlaf in den letzten 7 Nächten` : ''}.`
+      };
+    }
     default:
       return null;
   }
@@ -438,6 +454,73 @@ function openInfo(key) {
   );
   document.getElementById('info-dialog').showModal();
 }
+
+// ---------------------------------------------------------------------------
+// Erholung (Schlaf, HRV, Ruhepuls)
+// ---------------------------------------------------------------------------
+
+const RECOVERY_STATES = {
+  gut: { chip: 'solid-good', label: 'Gut erholt' },
+  normal: { chip: 'solid-muted', label: 'Normal' },
+  'eingeschränkt': { chip: 'solid-warning', label: 'Eingeschränkt' }
+};
+
+function fmtHours(h) {
+  if (h === null || h === undefined) return '–';
+  const min = Math.round(h * 60);
+  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+}
+
+function recoveryMetric(label, value, sub) {
+  return el('div', { class: 'rec-metric' }, [
+    el('div', { class: 'label' }, label),
+    el('div', { class: 'value' }, value),
+    sub ? el('div', { class: 'sub' }, sub) : null
+  ]);
+}
+
+function renderRecovery() {
+  const rec = currentState.recovery;
+  if (!rec) {
+    mount('recovery-card', el('button', { class: 'card next-card', type: 'button', onclick: openSettings, style: 'width:100%;text-align:left;color:inherit' }, [
+      el('div', { class: 'sport-icon', style: 'background:#23203a;color:#9b8cf2', html: MOON_ICON }),
+      el('div', { class: 'txt' }, [
+        el('div', { class: 't1' }, 'Schlaf & Erholung'),
+        el('div', { class: 't2' }, 'Noch keine Schlafdaten – jetzt verbinden')
+      ]),
+      chevron()
+    ]));
+    return;
+  }
+  const st = RECOVERY_STATES[rec.status] || RECOVERY_STATES.normal;
+  const ln = rec.lastNight;
+  const phases = ln ? [ln.deep ? `Tief ${fmtHours(ln.deep)}` : null, ln.rem ? `REM ${fmtHours(ln.rem)}` : null].filter(Boolean).join(' · ') : '';
+  const metrics = [
+    recoveryMetric('Ø 7 Nächte', rec.sleepAvg7 !== null ? `${fmtHours(rec.sleepAvg7)} h` : '–', rec.sleepAvg28 !== null ? `4 Wo.: ${fmtHours(rec.sleepAvg28)} h` : null),
+    rec.hrv ? recoveryMetric('HRV', `${Math.round(rec.hrv.latest)} ms`, rec.hrv.baseline ? `Ø ${Math.round(rec.hrv.baseline)} ms` : null) : null,
+    rec.restingHR ? recoveryMetric('Ruhepuls', `${Math.round(rec.restingHR.latest)}`, rec.restingHR.baseline ? `Ø ${Math.round(rec.restingHR.baseline)}` : null) : null
+  ].filter(Boolean);
+  mount('recovery-card', el('div', { class: 'card recovery' }, [
+    el('div', { class: 'card-head', style: 'margin-bottom:10px' }, [
+      el('div', { class: 'head-with-info' }, [el('h2', {}, 'Erholung'), infoButton('erholung', 'Erholung')]),
+      el('span', { class: `chip ${st.chip}` }, st.label)
+    ]),
+    el('div', { class: 'rec-main' }, [
+      el('div', { class: 'sport-icon', style: 'background:#23203a;color:#9b8cf2', html: MOON_ICON }),
+      el('div', {}, [
+        el('div', { class: 'muted small' }, 'Schlaf letzte Nacht'),
+        el('div', { class: 'rec-big' }, ln ? [`${fmtHours(ln.total)}`, el('span', { class: 'unit' }, ' h')] : '–'),
+        phases ? el('div', { class: 'muted small' }, phases) : null
+      ])
+    ]),
+    el('div', { class: 'rec-metrics', style: `grid-template-columns:repeat(${metrics.length}, minmax(0,1fr))` }, metrics),
+    rec.status === 'eingeschränkt' && rec.reasons.length
+      ? el('div', { class: 'rec-note' }, `${rec.reasons.join(', ')}. Heute lieber locker trainieren.`)
+      : null
+  ]));
+}
+
+const MOON_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>';
 
 function planWeekInfo() {
   const plan = currentState.plan;
@@ -815,6 +898,12 @@ function setupActivityUi() {
 function renderAnalysis() {
   if (!currentState) return;
   renderLoadChart(document.getElementById('load-chart'), currentState.analysis.dailyLoadSeries, 28);
+  const sleep = currentState.sleepSeries || [];
+  if (sleep.some((p) => p.total)) {
+    renderSleepChart(document.getElementById('sleep-chart'), sleep, 7);
+  } else {
+    mount('sleep-chart', el('div', { class: 'muted small' }, 'Noch keine Schlafdaten. In den Einstellungen unter „Schlaf & Erholung“ steht, wie du sie verbindest.'));
+  }
 
   const thisWeek = startOfLocalWeek(new Date());
   const weeks = [];
@@ -884,6 +973,18 @@ function renderSettings() {
       el('button', { class: 'secondary-btn', type: 'button', onclick: onRotateImportToken }, 'Neuer Token')
     ]),
     el('p', { class: 'muted small', style: 'margin-bottom:0' }, 'In Health Auto Export: Datentyp „Workouts“, Format JSON v2, Routendaten aus.')
+  );
+
+  // Schlaf & Erholung (zweite Automation)
+  const hm = currentState.healthMetrics || {};
+  const hmStale = !hm.lastImportAt || daysSince(hm.lastImportAt) > SYNC_STALE_DAYS;
+  mount('health-metrics-status',
+    el('div', { class: 'status-row' }, [
+      el('span', { class: 'dot', style: `background:${!hm.lastImportAt ? 'var(--muted)' : hmStale ? 'var(--warning)' : 'var(--good)'}` }),
+      !hm.lastImportAt ? 'Noch keine Schlafdaten' : hmStale ? 'Schlafdaten veraltet' : 'Schlafdaten aktiv'
+    ]),
+    hm.lastImportAt ? el('div', { class: 'muted small', style: 'margin-top:4px' }, `Letzte Übertragung ${relativeTime(hm.lastImportAt)}`) : null,
+    el('p', { class: 'small', style: 'color:var(--text-2);line-height:1.45;margin-bottom:0' }, 'Lege in Health Auto Export eine zweite REST-API-Automation mit derselben Adresse wie oben an: Datentyp „Gesundheitsmetriken“, darin nur „Schlafanalyse“, „Herzfrequenzvariabilität“ und „Ruhepuls“ auswählen, Schlafdaten zusammenfassen, Format JSON v2, Datumsbereich „Seit dem letzten Sync“.')
   );
 
   // Strava

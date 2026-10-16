@@ -26,6 +26,7 @@ const planner = require('./planner');
 const healthImport = require('./health-import');
 const healthAutoExport = require('./health-auto-export');
 const dedupe = require('./dedupe');
+const recovery = require('./recovery');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -178,6 +179,13 @@ function matchRoute(method, pathname) {
 route('GET', '/api/state', async (req, res) => {
   const s = await loadStore();
   const report = analysis.buildAnalysisReport(s.activities, s.athlete);
+  const rec = recovery.computeRecovery(s.health);
+  if (rec && rec.status === 'eingeschränkt') {
+    report.flags.unshift({
+      level: 'warnung',
+      message: `Eingeschränkte Erholung: ${rec.reasons.join(', ')}. Plane lockere Einheiten oder einen Ruhetag ein.`
+    });
+  }
   sendJson(res, 200, {
     athlete: s.athlete,
     strava: {
@@ -192,6 +200,9 @@ route('GET', '/api/state', async (req, res) => {
       importCount: s.appleHealth.importCount
     },
     recentActivities: s.activities.slice(0, 20),
+    recovery: rec,
+    sleepSeries: recovery.sleepSeries(s.health, 28),
+    healthMetrics: { lastImportAt: (s.health && s.health.lastImportAt) || null },
     plan: s.plan,
     analysis: report
   });
@@ -400,13 +411,20 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
   // die Trainingslast-Berechnung ab dem nächsten Sync spürbar genauer.
   const athleteDefaults = healthAutoExport.deriveAthleteDefaults(s, body);
 
+  // Schlaf / HRV / Ruhepuls (zweite Automation mit Datentyp "Gesundheitsmetriken")
+  const metricCounts = recovery.mergeHealthMetrics(s, body);
+  const metricsMerged = metricCounts.sleep + metricCounts.hrv + metricCounts.restingHR > 0;
+  if (metricsMerged) {
+    console.log(`[health-auto-export] Gesundheitsdaten übernommen: ${metricCounts.sleep} Nächte Schlaf, ${metricCounts.hrv} Tage HRV, ${metricCounts.restingHR} Tage Ruhepuls.`);
+  }
+
   // Doppelt erfasste Workouts (z.B. Watch + Strava-Kopie) direkt aussortieren
   const deduped = result.imported.length > 0 ? dedupe.removeDuplicates(s) : [];
   if (deduped.length) {
     console.log(`[dedupe] ${deduped.length} doppelte/zu kurze Einträge beim Import entfernt.`);
   }
 
-  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0) {
+  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0 || metricsMerged) {
     await saveStore(s);
   }
 
@@ -426,6 +444,7 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
     imported: result.imported.length,
     skipped: result.skipped.length,
     duplicatesRemoved: deduped.length,
+    healthMetrics: metricCounts,
     athleteDefaultsSet: athleteDefaults,
     activities: result.imported
   });

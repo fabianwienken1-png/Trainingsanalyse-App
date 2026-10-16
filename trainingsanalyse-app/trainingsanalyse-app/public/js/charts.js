@@ -142,5 +142,49 @@ function localDateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// series: [{ date: 'YYYY-MM-DD', total, deep, rem }] (Stunden, null = keine Daten)
+function renderSleepChart(container, series, targetHours = 7) {
+  const height = 150;
+  const chartH = height - 24;
+  const { svg, width, show } = setupChart(container, 'Schlafdauer der letzten Nächte', height);
+  const maxVal = Math.max(9, ...series.map((p) => p.total || 0));
+  const slot = width / series.length;
+  const barW = Math.min(16, Math.max(3, slot * 0.6));
+  const color = '#9b8cf2';
+  const lowColor = cssVar('--warning', '#f5b544');
+
+  drawGrid(svg, width, chartH);
+  const yT = chartH - (targetHours / maxVal) * (chartH - 10);
+  svg.appendChild(svgEl('line', { x1: 0, x2: width, y1: yT, y2: yT, stroke: cssVar('--text-2', '#c9cbcf'), 'stroke-width': 1, 'stroke-dasharray': '4 4', opacity: 0.6 }));
+  const tl = svgEl('text', { x: width - 2, y: yT - 4, 'text-anchor': 'end', 'font-size': 11, fill: cssVar('--muted', '#9a9da3') });
+  tl.textContent = `${targetHours} h`;
+  svg.appendChild(tl);
+
+  series.forEach((p, i) => {
+    const v = p.total || 0;
+    const barH = (v / maxVal) * (chartH - 10);
+    const x = i * slot + (slot - barW) / 2;
+    const y = chartH - barH;
+    if (v > 0) {
+      svg.appendChild(svgEl('rect', { x, y, width: barW, height: barH, rx: Math.min(3, barW / 2), fill: v < 6 ? lowColor : color }));
+    }
+    const d = new Date(p.date + 'T12:00:00');
+    const parts = [];
+    if (p.deep) parts.push(`Tief ${formatHours(p.deep)}`);
+    if (p.rem) parts.push(`REM ${formatHours(p.rem)}`);
+    const text = `${d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })}: ${v ? formatHours(v) : 'keine Daten'}${parts.length ? ' (' + parts.join(', ') + ')' : ''}`;
+    const hit = svgEl('rect', { x: i * slot, y: 0, width: slot, height: chartH, fill: 'transparent' });
+    hit.addEventListener('pointerenter', () => show(text, x + barW / 2, Math.max(y, 30)));
+    hit.addEventListener('pointerdown', () => show(text, x + barW / 2, Math.max(y, 30)));
+    svg.appendChild(hit);
+    if (i % 7 === 0 || i === series.length - 1) {
+      const anchor = i === 0 ? 'start' : i === series.length - 1 ? 'end' : 'middle';
+      const lx = anchor === 'start' ? x : anchor === 'end' ? x + barW : x + barW / 2;
+      axisLabel(svg, lx, height - 6, d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }), anchor);
+    }
+  });
+}
+
 window.renderLoadChart = renderLoadChart;
+window.renderSleepChart = renderSleepChart;
 window.renderVolumeChart = renderVolumeChart;

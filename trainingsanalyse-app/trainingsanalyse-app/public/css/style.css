@@ -445,3 +445,17 @@ select {
   margin-top: 4px; padding: 12px 14px; border-radius: 12px;
   background: var(--surface-2); font-size: 15px; line-height: 1.4; color: var(--text);
 }
+
+/* ---------- Erholung ---------- */
+
+.rec-main { display: flex; align-items: center; gap: 14px; }
+.rec-big { font-family: var(--font-num); font-weight: 700; font-size: 40px; line-height: 1; margin: 2px 0; }
+.rec-big .unit { font-size: 20px; font-weight: 600; color: var(--muted); }
+.rec-metrics { display: grid; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.rec-metric .label { font-size: 12px; color: var(--muted); }
+.rec-metric .value { font-family: var(--font-num); font-weight: 600; font-size: 22px; }
+.rec-metric .sub { font-size: 12px; color: var(--muted); }
+.rec-note {
+  margin-top: 12px; padding: 10px 12px; border-radius: 12px;
+  background: #2e2416; border: 1px solid #5a4520; color: #f7d9a0; font-size: 14px; line-height: 1.4;
+}
