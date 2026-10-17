@@ -672,9 +672,15 @@ function renderSpontanResult(data) {
     ]),
     codeRow(w),
     el('ol', { class: 'steps' }, w.steps.map((st) => el('li', {}, [
-      el('span', { class: 'step-label' }, st.label),
+      el('span', { class: 'step-label' }, [
+        st.label,
+        st.hr ? el('span', { class: 'step-hr', 'aria-label': `Zielpuls ${st.hr}` }, [el('span', { class: 'heart', 'aria-hidden': 'true' }, '♥'), ` ${st.hr}`]) : null,
+        !st.hr && st.zone ? el('span', { class: 'step-hr muted' }, `Zone ${st.zone}`) : null
+      ]),
       el('span', { class: 'step-text' }, st.text)
     ]))),
+    w.steps.some((st) => st.hr) ? null : (w.sport === 'strength' ? null : el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Trag Maximal- und Ruhepuls in den Einstellungen ein, dann siehst du hier zu jedem Abschnitt den Zielpuls.')),
+    w.sport === 'swim' && w.steps.some((st) => st.hr) ? el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Im Wasser liegt der Puls bei gleicher Anstrengung meist 10–15 Schläge niedriger als an Land – die Zielwerte sind deshalb niedriger angesetzt.') : null,
     w.why && w.why.length ? el('div', { class: 'why' }, [
       el('div', { class: 'small muted', style: 'margin-bottom:6px' }, 'Warum dieser Vorschlag?'),
       el('ul', {}, w.why.map((r) => el('li', {}, r.charAt(0).toUpperCase() + r.slice(1))))
@@ -795,7 +801,7 @@ function renderNextSession(now) {
     sportIcon(g),
     el('div', { class: 'txt' }, [
       el('div', { class: 't1' }, `Als Nächstes · ${when}`),
-      el('div', { class: 't2' }, `${sportLabel(next.sport)} · ${next.targetDurationMin} min`)
+      el('div', { class: 't2' }, `${sportLabel(next.sport)} · ${next.targetDurationMin} min${planTargetHr(next) ? ` · ♥ ${planTargetHr(next)}` : ''}`)
     ]),
     chevron()
   ]);
@@ -887,7 +893,10 @@ function renderPlan() {
           el('span', { class: 'sport-bar', style: `background:${g.color}` }),
           el('div', { class: 'session-text' }, [
             el('div', { class: 'title' }, sportLabel(s.sport)),
-            el('div', { class: 'desc' }, `${s.targetDurationMin} min · ${s.description}`)
+            el('div', { class: 'desc' }, [
+              `${s.targetDurationMin} min · ${s.description}`,
+              planTargetHr(s) ? el('span', { class: 'plan-hr' }, [el('span', { class: 'heart', 'aria-hidden': 'true' }, ' ♥'), ` ${planTargetHr(s)}`]) : null
+            ])
           ]),
           chip
         ]),
@@ -899,6 +908,15 @@ function renderPlan() {
   if (restDays.length) {
     sessionsBox.appendChild(el('div', { class: 'small muted', style: 'padding:4px' }, `Ruhetag${restDays.length > 1 ? 'e' : ''}: ${restDays.join(', ')}`));
   }
+}
+
+// Zielpuls einer Plan-Einheit (Hauptteil) – gleiche Formel wie auf dem Server (Karvonen)
+function planTargetHr(session) {
+  const a = currentState && currentState.athlete;
+  if (!a || !a.maxHR || !a.restingHR || session.sport === 'WeightTraining') return null;
+  const [lo, hi, pos] = { easy: [0.6, 0.7, 0.5], moderate: [0.7, 0.8, 0.6], hard: [0.8, 0.9, 0.5] }[session.intensity] || [0.6, 0.7, 0.5];
+  const swimOffset = session.sport === 'Swim' ? -0.05 : 0;
+  return Math.round(a.restingHR + (a.maxHR - a.restingHR) * (lo + (hi - lo) * pos + swimOffset));
 }
 
 async function onSetSessionStatus(sessionId, status) {

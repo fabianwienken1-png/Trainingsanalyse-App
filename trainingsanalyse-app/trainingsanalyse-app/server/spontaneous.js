@@ -59,15 +59,34 @@ function swimPace(activities) {
 // Einheiten-Vorlagen
 // ---------------------------------------------------------------------------
 
+// Zielpuls als einzelne Zahl innerhalb einer Zone (pos 0 = Untergrenze, 1 = Obergrenze)
+function bpm(athlete, n, pos = 0.5) {
+  const bounds = { 1: [0.5, 0.6], 2: [0.6, 0.7], 3: [0.7, 0.8], 4: [0.8, 0.9], 5: [0.9, 1.0] }[n];
+  if (!athlete.maxHR || !athlete.restingHR) return null;
+  const hrr = athlete.maxHR - athlete.restingHR;
+  return Math.round(athlete.restingHR + hrr * (bounds[0] + (bounds[1] - bounds[0]) * pos));
+}
+
+// Schritt mit Zielpuls: z = Zone, pos = Lage in der Zone
+function step(a, label, text, z, pos) {
+  return { label, text, hr: z ? bpm(a, z, pos) : null, zone: z || null };
+}
+
 function buildWorkout(sport, intensity, minutes, ctx) {
   const a = ctx.athlete;
   const D = minutes;
+  // Standard-Zielpulse
+  const WARM = [2, 0.3];      // einlaufen / einrollen
+  const BASE = [2, 0.5];      // Grundlage
+  const REST = [1, 0.6];      // Pausen zwischen Intervallen
+  const COOL = [1, 0.25];     // ausrollen / auslaufen
+
   if (intensity === 'rest') {
     return {
       title: 'Aktive Erholung',
       steps: [
-        { label: `${Math.min(D, 30)} min`, text: 'lockerer Spaziergang oder sehr lockeres Radeln, Puls deutlich unter Zone 2' },
-        { label: '10–15 min', text: 'Mobility: Hüftbeuger, Waden, Brustwirbelsäule, Faszienrolle' }
+        step(a, `${Math.min(D, 30)} min`, 'lockerer Spaziergang oder sehr lockeres Radeln', 1, 0),
+        step(a, '10–15 min', 'Mobility: Hüftbeuger, Waden, Brustwirbelsäule, Faszienrolle')
       ]
     };
   }
@@ -78,10 +97,11 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       return {
         title: 'Lockerer Dauerlauf',
         steps: [
-          { label: '5 min', text: `einlaufen, sehr locker` },
-          { label: `${main} min`, text: `gleichmäßig in ${zone(a, 2)} – Unterhaltung muss möglich sein` },
-          D >= 40 ? { label: '4 × 20 s', text: 'Steigerungsläufe, locker schnell, dazwischen 1 min gehen/traben' } : null,
-          { label: '5 min', text: `locker auslaufen in ${zone(a, 1)} oder darunter` }
+          step(a, '5 min', `einlaufen, sehr locker – ${zone(a, 2)}`, ...WARM),
+          step(a, `${main} min`, `gleichmäßig in ${zone(a, 2)} – Unterhaltung muss möglich sein`, ...BASE),
+          D >= 40 ? step(a, '4 × 20 s', 'Steigerungsläufe, locker schnell – zu kurz für einen Zielpuls, nach Gefühl') : null,
+          D >= 40 ? step(a, 'je 1 min', `dazwischen gehen/traben – ${zone(a, 1)}`, ...REST) : null,
+          step(a, '5 min', `locker auslaufen – ${zone(a, 1)}`, ...COOL)
         ]
       };
     }
@@ -91,10 +111,11 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       return {
         title: 'Tempodauerlauf',
         steps: [
-          { label: '15 min', text: `einlaufen in ${zone(a, 2)}` },
-          { label: `2 × ${block} min`, text: `zügig in ${zone(a, 3)}, dazwischen 3 min traben in ${zone(a, 1)}` },
-          extra >= 5 ? { label: `${extra} min`, text: `ruhig weiter in ${zone(a, 2)}` } : null,
-          { label: `${extra >= 5 ? 7 : Math.max(5, extra + 7)} min`, text: `locker auslaufen in ${zone(a, 1)} oder darunter` }
+          step(a, '15 min', `einlaufen – ${zone(a, 2)}`, ...WARM),
+          step(a, `2 × ${block} min`, `zügig – ${zone(a, 3)}`, 3, 0.6),
+          step(a, '3 min', `Pause dazwischen: traben – ${zone(a, 1)}`, ...REST),
+          extra >= 5 ? step(a, `${extra} min`, `ruhig weiter – ${zone(a, 2)}`, ...BASE) : null,
+          step(a, `${extra >= 5 ? 7 : Math.max(5, extra + 7)} min`, `locker auslaufen – ${zone(a, 1)}`, ...COOL)
         ]
       };
     }
@@ -103,10 +124,11 @@ function buildWorkout(sport, intensity, minutes, ctx) {
     return {
       title: 'Intervalle',
       steps: [
-        { label: '15 min', text: `einlaufen in ${zone(a, 2)}, dann 3 kurze Steigerungen` },
-        { label: `${reps} × 3 min`, text: `schnell in ${zone(a, 4)}, dazwischen 2 min traben in ${zone(a, 1)}` },
-        extra >= 5 ? { label: `${extra} min`, text: `ruhig in ${zone(a, 2)}` } : null,
-        { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: `locker auslaufen in ${zone(a, 1)} oder darunter` }
+        step(a, '15 min', `einlaufen – ${zone(a, 2)}, am Ende 3 kurze Steigerungen`, ...WARM),
+        step(a, `${reps} × 3 min`, `schnell – ${zone(a, 4)}`, 4, 0.5),
+        step(a, 'je 2 min', `Pause dazwischen: traben – ${zone(a, 1)}`, ...REST),
+        extra >= 5 ? step(a, `${extra} min`, `ruhig – ${zone(a, 2)}`, ...BASE) : null,
+        step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker auslaufen – ${zone(a, 1)}`, ...COOL)
       ]
     };
   }
@@ -116,9 +138,9 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       return {
         title: 'Grundlagenausdauer Rad',
         steps: [
-          { label: '10 min', text: 'locker einrollen' },
-          { label: `${Math.max(10, D - 15)} min`, text: `gleichmäßig in ${zone(a, 2)}, Trittfrequenz 85–95` },
-          { label: '5 min', text: `locker ausrollen in ${zone(a, 1)} oder darunter` }
+          step(a, '10 min', `locker einrollen – ${zone(a, 2)}`, ...WARM),
+          step(a, `${Math.max(10, D - 15)} min`, `gleichmäßig – ${zone(a, 2)}, Trittfrequenz 85–95`, ...BASE),
+          step(a, '5 min', `locker ausrollen – ${zone(a, 1)}`, ...COOL)
         ]
       };
     }
@@ -128,10 +150,11 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       return {
         title: 'Sweet Spot',
         steps: [
-          { label: '15 min', text: `einrollen in ${zone(a, 2)}` },
-          { label: `${reps} × 8 min`, text: `kräftig in ${zone(a, 3)} (oberer Bereich), dazwischen 4 min locker in ${zone(a, 1)}` },
-          extra >= 5 ? { label: `${extra} min`, text: `gleichmäßig in ${zone(a, 2)}` } : null,
-          { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: `locker ausrollen in ${zone(a, 1)} oder darunter` }
+          step(a, '15 min', `einrollen – ${zone(a, 2)}`, ...WARM),
+          step(a, `${reps} × 8 min`, `kräftig – ${zone(a, 3)}, oberer Bereich`, 3, 0.75),
+          step(a, 'je 4 min', `Pause dazwischen: locker treten – ${zone(a, 1)}`, ...REST),
+          extra >= 5 ? step(a, `${extra} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE) : null,
+          step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker ausrollen – ${zone(a, 1)}`, ...COOL)
         ]
       };
     }
@@ -140,15 +163,18 @@ function buildWorkout(sport, intensity, minutes, ctx) {
     return {
       title: 'VO2max-Intervalle',
       steps: [
-        { label: '15 min', text: `einrollen in ${zone(a, 2)}, 2 × 30 s antreten` },
-        { label: `${reps} × 3 min`, text: `hart in ${zone(a, 5)}, dazwischen 3 min sehr locker in ${zone(a, 1)}` },
-        extra >= 5 ? { label: `${extra} min`, text: `gleichmäßig in ${zone(a, 2)}` } : null,
-        { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: `locker ausrollen in ${zone(a, 1)} oder darunter` }
+        step(a, '15 min', `einrollen – ${zone(a, 2)}, am Ende 2 × 30 s antreten`, ...WARM),
+        step(a, `${reps} × 3 min`, `hart – ${zone(a, 5)}`, 5, 0.3),
+        step(a, 'je 3 min', `Pause dazwischen: sehr locker treten – ${zone(a, 1)}`, ...REST),
+        extra >= 5 ? step(a, `${extra} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE) : null,
+        step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker ausrollen – ${zone(a, 1)}`, ...COOL)
       ]
     };
   }
 
   if (sport === 'swim') {
+    // Im Wasser liegt der Puls bei gleicher Anstrengung meist 10–15 Schläge niedriger
+    // als an Land – daher eher die unteren Bereiche der Zonen.
     const totalM = roundTo(((D - 5) * 60) / ctx.swimPace * 100, 100); // ~5 min Pausen
     if (intensity === 'easy') {
       const main = Math.max(200, totalM - 300 - 300 - 200);
@@ -156,10 +182,10 @@ function buildWorkout(sport, intensity, minutes, ctx) {
         title: 'Technik & Grundlage',
         distance: totalM,
         steps: [
-          { label: '300 m', text: 'einschwimmen, locker, gemischte Lagen erlaubt' },
-          { label: '6 × 50 m', text: 'Technik: Abschlagschwimmen, Faustschwimmen, Zählen der Züge – 15 s Pause' },
-          { label: `${main} m`, text: 'gleichmäßig locker kraulen, Fokus auf lange Züge' },
-          { label: '200 m', text: 'ausschwimmen' }
+          step(a, '300 m', 'einschwimmen, locker, gemischte Lagen erlaubt', 1, 0.5),
+          step(a, '6 × 50 m', 'Technik: Abschlagschwimmen, Faustschwimmen, Zählen der Züge – 15 s Pause', 1, 0.7),
+          step(a, `${main} m`, 'gleichmäßig locker kraulen, Fokus auf lange Züge', 2, 0.2),
+          step(a, '200 m', 'ausschwimmen', 1, 0.25)
         ]
       };
     }
@@ -170,10 +196,10 @@ function buildWorkout(sport, intensity, minutes, ctx) {
         title: 'Ausdauer zügig',
         distance: totalM,
         steps: [
-          { label: '400 m', text: 'einschwimmen, davon 100 m Technik' },
-          { label: `${reps} × 100 m`, text: 'zügig, gleichmäßiges Tempo – 20 s Pause' },
-          left >= 200 && totalM - 600 - reps * 100 >= 150 ? { label: `${left} m`, text: 'locker, gleichmäßig' } : null,
-          { label: '200 m', text: 'ausschwimmen' }
+          step(a, '400 m', 'einschwimmen, davon 100 m Technik', 1, 0.6),
+          step(a, `${reps} × 100 m`, 'zügig, gleichmäßiges Tempo – 20 s Pause am Beckenrand', 3, 0.2),
+          left >= 200 && totalM - 600 - reps * 100 >= 150 ? step(a, `${left} m`, 'locker, gleichmäßig', 2, 0.2) : null,
+          step(a, '200 m', 'ausschwimmen', 1, 0.25)
         ]
       };
     }
@@ -182,10 +208,10 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       title: 'Tempo-Intervalle',
       distance: totalM,
       steps: [
-        { label: '400 m', text: 'einschwimmen, 4 × 25 m Steigerung' },
-        { label: `${reps} × 50 m`, text: 'schnell – 30 s Pause' },
-        { label: '200 m', text: 'locker' },
-        { label: '100 m', text: 'ausschwimmen' }
+        step(a, '400 m', 'einschwimmen, am Ende 4 × 25 m Steigerung', 1, 0.6),
+        step(a, `${reps} × 50 m`, 'schnell – 30 s Pause am Beckenrand', 4, 0.2),
+        step(a, '200 m', 'locker', 2, 0.1),
+        step(a, '100 m', 'ausschwimmen', 1, 0.25)
       ]
     };
   }
