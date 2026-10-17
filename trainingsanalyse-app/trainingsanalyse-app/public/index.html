@@ -23,12 +23,14 @@
 <body>
 
 <div id="login-screen" class="login-screen" hidden>
-  <form id="login-form" class="login-box">
+  <form id="login-form" class="login-box" method="post" action="/api/login">
     <img src="/icons/icon-192.png" alt="" class="login-icon" width="72" height="72" />
     <h1>Trainingsanalyse</h1>
     <p class="muted">Bitte mit deinem Passwort anmelden.</p>
+    <!-- Benutzername nur für den iCloud-Schlüsselbund (Passwort mit Face ID einsetzen) -->
+    <input type="text" name="username" autocomplete="username" value="Trainingsanalyse" class="sr-only" tabindex="-1" aria-hidden="true" readonly />
     <label for="login-password" class="sr-only">Passwort</label>
-    <input id="login-password" type="password" autocomplete="current-password" placeholder="Passwort" required />
+    <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Passwort" required />
     <div id="login-error" class="login-error" role="alert"></div>
     <button type="submit" class="primary-btn">Anmelden</button>
   </form>
