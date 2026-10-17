@@ -62,7 +62,12 @@ function computeActivityLoad(activity, athlete) {
     return trimpExp(durationMin, hrReserveFraction, athlete.gender);
   }
 
-  // 3. Fallback: grobe Schätzung nach Sportart-Dauer.
+  // 3. Gefühlte Anstrengung (Session-RPE nach Foster), auf TRIMP-Niveau skaliert
+  if (activity.rpe >= 1 && activity.rpe <= 10) {
+    return durationMin * activity.rpe * 0.55;
+  }
+
+  // 4. Fallback: grobe Schätzung nach Sportart-Dauer.
   const factor = FALLBACK_INTENSITY_PER_MIN[activity.type] ?? FALLBACK_INTENSITY_PER_MIN.default;
   return durationMin * factor;
 }

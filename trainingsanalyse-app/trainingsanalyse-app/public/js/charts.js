@@ -185,6 +185,48 @@ function renderSleepChart(container, series, targetHours = 7) {
   });
 }
 
+// points: [{ week: 'YYYY-MM-DD', value|null }] – Linie mit Punkten, Lücken werden überbrückt
+function renderTrendChart(container, points, opts = {}) {
+  const height = 96;
+  const chartH = height - 20;
+  const { svg, width, show } = setupChart(container, `${opts.label || 'Trend'} der letzten Wochen`, height);
+  const vals = points.filter((p) => p.value !== null).map((p) => p.value);
+  let min = Math.min(...vals);
+  let max = Math.max(...vals);
+  const pad = (max - min) * 0.2 || Math.abs(max) * 0.05 || 1;
+  min -= pad; max += pad;
+  const slot = width / points.length;
+  const xOf = (i) => i * slot + slot / 2;
+  const yOf = (v) => 6 + (1 - (v - min) / (max - min)) * (chartH - 12);
+  const grid = cssVar('--gridline', '#2a2d33');
+  svg.appendChild(svgEl('line', { x1: 0, x2: width, y1: chartH, y2: chartH, stroke: cssVar('--baseline', '#3a3d44'), 'stroke-width': 1 }));
+  svg.appendChild(svgEl('line', { x1: 0, x2: width, y1: chartH / 2, y2: chartH / 2, stroke: grid, 'stroke-width': 1 }));
+  const color = opts.color || cssVar('--accent', '#d4f25c');
+  let d = '';
+  points.forEach((p, i) => {
+    if (p.value === null) return;
+    d += `${d ? 'L' : 'M'}${xOf(i).toFixed(1)},${yOf(p.value).toFixed(1)}`;
+  });
+  svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  points.forEach((p, i) => {
+    const date = new Date(p.week + 'T12:00:00');
+    if (p.value !== null) {
+      svg.appendChild(svgEl('circle', { cx: xOf(i), cy: yOf(p.value), r: i === points.length - 1 ? 3.5 : 2, fill: color }));
+    }
+    const text = `Woche ab ${date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}: ${p.value === null ? 'keine Daten' : p.value.toLocaleString('de-DE', { maximumFractionDigits: opts.decimals ?? 1 }) + ' ' + (opts.unit || '')}`;
+    const hit = svgEl('rect', { x: i * slot, y: 0, width: slot, height: chartH, fill: 'transparent' });
+    const y = p.value === null ? chartH / 2 : yOf(p.value);
+    hit.addEventListener('pointerenter', () => show(text, xOf(i), Math.max(y, 24)));
+    hit.addEventListener('pointerdown', () => show(text, xOf(i), Math.max(y, 24)));
+    svg.appendChild(hit);
+    if (i === 0 || i === points.length - 1 || i === Math.floor(points.length / 2)) {
+      const anchor = i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle';
+      axisLabel(svg, anchor === 'start' ? 0 : anchor === 'end' ? width : xOf(i), height - 4, date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }), anchor);
+    }
+  });
+}
+
+window.renderTrendChart = renderTrendChart;
 window.renderLoadChart = renderLoadChart;
 window.renderSleepChart = renderSleepChart;
 window.renderVolumeChart = renderVolumeChart;

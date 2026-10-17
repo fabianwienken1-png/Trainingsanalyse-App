@@ -552,3 +552,27 @@ select {
 .label-like { font-size: 14px; color: var(--text-2); }
 .chip-row.wrap { flex-wrap: wrap; margin: 0; padding: 0; overflow: visible; }
 input[type="date"] { width: 100%; min-height: 44px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; color: var(--text); font-family: inherit; font-size: 16px; -webkit-appearance: none; appearance: none; color-scheme: dark; }
+
+/* Zieltempo / Watt je Abschnitt */
+.spontan-title { hyphens: auto; -webkit-hyphens: auto; overflow-wrap: anywhere; }
+.spontan-head .txt { min-width: 0; flex: 1; }
+.step-target { display: block; margin-top: 4px; font-family: var(--font-num); font-size: 15px; font-weight: 600; color: var(--accent); }
+
+/* Gefühlte Anstrengung (RPE) */
+.rpe-row { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
+.rpe-btn { height: 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2, #1f2125); color: var(--text); font-family: var(--font-num); font-size: 17px; font-weight: 600; padding: 0; }
+.rpe-btn.rpe-low { --c: #7fd6b4; color: var(--c); }
+.rpe-btn.rpe-mid { --c: var(--accent); color: var(--c); }
+.rpe-btn.rpe-high { --c: #f5b544; color: var(--c); }
+.rpe-btn.rpe-max { --c: #f28c8c; color: var(--c); }
+.rpe-btn[aria-pressed="true"] { background: var(--c); color: #111; border-color: var(--c); }
+.rpe-card .card-head h2 { font-size: 17px; }
+
+/* Langzeit-Trends */
+.trend + .trend { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.trend-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.trend-title { font-weight: 600; }
+.trend-value { font-family: var(--font-num); font-size: 18px; font-weight: 600; text-align: right; }
+.trend-delta { font-size: 13px; font-weight: 500; color: var(--muted); }
+.trend-delta.good { color: var(--good); }
+.trend-delta.bad { color: var(--warning); }

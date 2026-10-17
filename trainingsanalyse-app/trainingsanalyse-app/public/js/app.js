@@ -172,7 +172,7 @@ function el(tag, attrs = {}, children = []) {
 function mount(id, ...nodes) {
   const box = document.getElementById(id);
   box.innerHTML = '';
-  for (const n of nodes) if (n) box.appendChild(n);
+  for (const n of nodes) if (n !== null && n !== undefined && n !== false) box.appendChild(typeof n === 'string' || typeof n === 'number' ? document.createTextNode(String(n)) : n);
   return box;
 }
 
@@ -405,6 +405,8 @@ function renderToday() {
     legend
   ]));
 
+  renderRpePrompt();
+
   // Nächste Einheit
   mount('next-session', renderNextSession(now));
 
@@ -507,6 +509,29 @@ function infoContent(key) {
         current: d.reason || null
       };
     }
+    case 'rpe': {
+      const r = currentState.rpe || {};
+      return {
+        title: 'Gefühlte Anstrengung (RPE)',
+        paras: [
+          'Nach jedem Training bewertest du kurz, wie anstrengend es sich angefühlt hat: 1–3 locker, 4–6 fordernd, 7–8 sehr anstrengend, 9–10 am Limit.',
+          'Puls und Tempo zeigen, was du geleistet hast – dein Gefühl zeigt, was es dich gekostet hat. Fühlen sich lockere Einheiten dauerhaft schwer an (Ø 6 oder mehr), steigert der Plan den Umfang nicht weiter. Ist die ganze Woche sehr anstrengend (Ø 7,5 oder mehr), wird gehalten bzw. reduziert. Eine 9 oder 10 am Vortag entschärft eine harte Einheit am nächsten Tag.',
+          'Für Einheiten ohne Pulsmessung wird die Trainingslast aus Dauer × Anstrengung berechnet.'
+        ],
+        current: r.count ? `Letzte 14 Tage: ${r.count} Bewertungen${r.easyAvg !== null ? ` · lockere Einheiten Ø ${fmtNum(r.easyAvg, 1)}` : ''}${r.hardAvg !== null ? ` · fordernde Ø ${fmtNum(r.hardAvg, 1)}` : ''}.` : 'Noch keine Bewertungen in den letzten 14 Tagen.'
+      };
+    }
+    case 'trends':
+      return {
+        title: 'Langzeit-Trends',
+        paras: [
+          'Wochenmittel über ein halbes Jahr – einzelne Tage schwanken stark, der Verlauf zeigt die Richtung.',
+          'Ruhepuls: sinkt mit wachsender Ausdauer. Ein Anstieg über mehrere Tage kann auf Ermüdung oder einen Infekt hindeuten.',
+          'HRV (Herzfrequenzvariabilität): höher ist meist besser erholt. Wichtig ist der Vergleich mit dir selbst, nicht mit anderen.',
+          'Lauf-Effizienz: Meter pro Herzschlag (Tempo in m/min ÷ Ø-Puls). Steigt der Wert, läufst du bei gleichem Puls schneller – deine aerobe Fitness wächst. Hitze, Hügel und Intervalle drücken den Wert, deshalb zählt der Trend über Wochen.'
+        ],
+        current: null
+      };
     case 'erholung': {
       const rec = currentState.recovery;
       return {
@@ -752,9 +777,14 @@ function workoutCard(w, whyTitle = 'Warum dieser Vorschlag?') {
         st.hr ? el('span', { class: 'step-hr', 'aria-label': `Zielpuls ${st.hr}` }, [el('span', { class: 'heart', 'aria-hidden': 'true' }, '♥'), ` ${st.hr}`]) : null,
         !st.hr && st.zone ? el('span', { class: 'step-hr muted' }, `Zone ${st.zone}`) : null
       ]),
-      el('span', { class: 'step-text' }, st.text)
+      el('span', { class: 'step-text' }, [
+        st.text,
+        st.pace || st.watts ? el('span', { class: 'step-target' }, st.pace ? `${st.pace} · Laufband ${st.speed}` : st.watts) : null
+      ])
     ]))),
     w.steps.some((st) => st.hr) ? null : (w.sport === 'strength' ? null : el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Trag Maximal- und Ruhepuls in den Einstellungen ein, dann siehst du hier zu jedem Abschnitt den Zielpuls.')),
+    w.sport === 'run' && !w.steps.some((st) => st.pace) && w.steps.some((st) => st.zone) ? el('p', { class: 'muted small', style: 'margin:12px 0 0' }, ['Mit einer Bestzeit siehst du hier auch das Zieltempo. ', el('button', { class: 'link-btn', type: 'button', onclick: () => openSettings('perf') }, 'Bestzeit eintragen')]) : null,
+    w.sport === 'bike' && !w.steps.some((st) => st.watts) && w.steps.some((st) => st.zone) ? el('p', { class: 'muted small', style: 'margin:12px 0 0' }, ['Mit deiner FTP siehst du hier auch Watt-Vorgaben fürs Skillbike. ', el('button', { class: 'link-btn', type: 'button', onclick: () => openSettings('perf') }, 'FTP eintragen')]) : null,
     w.sport === 'swim' && w.steps.some((st) => st.hr) ? el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Im Wasser liegt der Puls bei gleicher Anstrengung meist 10–15 Schläge niedriger als an Land – die Zielwerte sind deshalb niedriger angesetzt.') : null,
     w.why && w.why.length ? el('div', { class: 'why' }, [
       el('div', { class: 'small muted', style: 'margin-bottom:6px' }, whyTitle),
@@ -794,6 +824,9 @@ const DEVICE_LABEL = { watch: 'Apple Watch', technogym: 'Technogym-App' };
 
 function codeRow(w) {
   if (!w.code) return null;
+  if (w.sport === 'mobility') {
+    return el('div', { class: 'code-box' }, el('div', { class: 'code-hint', style: 'margin:0' }, 'Auf der Watch einfach das Training „Flexibilität“ starten – die App erkennt es automatisch und hakt die Einheit ab.'));
+  }
   const lib = (currentState && currentState.workoutLibrary) || {};
   const created = !!lib[w.code];
   const where = DEVICE_LABEL[w.device] || 'Uhr';
@@ -929,7 +962,7 @@ function renderPlan() {
   }
   label.textContent = `KW ${isoWeek(info.start)} · ${fmtRange(info.start, addDays(info.start, 6))}`;
 
-  const sessions = plan.sessions.filter((s) => s.kind !== 'race');
+  const sessions = plan.sessions.filter((s) => s.kind !== 'race' && s.kind !== 'mobility');
   const total = sessions.length;
   const done = sessions.filter((s) => s.status === 'done').length;
   const plannedMin = sessions.reduce((a, s) => a + s.targetDurationMin, 0);
@@ -996,14 +1029,14 @@ function renderPlan() {
           el('button', { class: 'reset-btn', type: 'button', onclick: () => onAdjustSession(s.id, 'undo') },
             `Rückgängig (${INTENSITY_LABELS[s.original && s.original.intensity] || ''} · ${s.original ? s.original.targetDurationMin : ''} min)`)
         ])
-        : s.intensity && s.intensity !== 'easy' && s.sport !== 'WeightTraining'
+        : s.intensity && s.intensity !== 'easy' && s.sport !== 'WeightTraining' && s.kind !== 'mobility'
           ? el('button', { class: 'reset-btn', type: 'button', onclick: () => onAdjustSession(s.id, 'easy', 'Manuell auf locker gesetzt') }, 'Lockerer machen')
           : null;
       footer = footer ? el('div', {}, [footer, extra]) : extra;
     }
 
     const w = s.workout;
-    const kindTag = { long: 'lang', quality: INTENSITY_LABELS[s.intensity], brick: 'Koppel', strength: null, easy: null }[s.kind];
+    const kindTag = { long: 'lang', quality: INTENSITY_LABELS[s.intensity], brick: 'Koppel', strength: null, easy: null, mobility: null }[s.kind];
     sessionsBox.appendChild(el('div', { class: `session-row${isToday ? ' today' : ''}` }, [
       el('div', { class: 'session-day' }, [el('span', { class: 'wd' }, s.weekday), el('span', { class: 'dn' }, String(dd))]),
       el('div', { class: `session-card ${s.status}` }, [
@@ -1015,7 +1048,8 @@ function renderPlan() {
               `${s.targetDurationMin} min`,
               w && w.distance ? ` · ca. ${w.distance.toLocaleString('de-DE')} m` : '',
               w ? el('span', { class: 'code-inline' }, ` · ${w.code}${w.created ? ' ✓' : ''}`) : '',
-              planTargetHr(s) ? el('span', { class: 'plan-hr' }, [el('span', { class: 'heart', 'aria-hidden': 'true' }, ' ♥'), ` ${planTargetHr(s)}`]) : null
+              planTargetHr(s) ? el('span', { class: 'plan-hr' }, [el('span', { class: 'heart', 'aria-hidden': 'true' }, ' ♥'), ` ${planTargetHr(s)}`]) : null,
+              w && (w.mainPace || w.mainWatts) ? el('span', { class: 'plan-hr' }, ` · ${w.mainPace || w.mainWatts}`) : null
             ])
           ]),
           chip || chevron()
@@ -1043,6 +1077,7 @@ function openSessionDetail(id) {
   if (s.kind === 'brick') why.push('Koppeltraining: gewöhnt die Beine an den Wechsel vom Rad zum Laufen');
   if (s.kind === 'easy') why.push('Lockere Einheit – fördert die Erholung und den Fettstoffwechsel');
   if (s.kind === 'strength') why.push('Kraft beugt Verletzungen vor und verbessert die Laufökonomie');
+  if (s.kind === 'mobility') why.push('Dehnen und Mobilität halten Hüfte, Waden und Rücken beweglich – gerade nach langen oder harten Einheiten. Auf der Watch als „Flexibilität“ starten, dann wird es automatisch erkannt.');
   if (s.adjusted && s.adjustReason) why.push(s.adjustReason);
   const w = {
     sport: g.key, sportLabel: `${s.weekday}, ${new Date(s.day + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })} · ${sportLabel(s.sport)}`,
@@ -1227,9 +1262,77 @@ function openActivityDetail(act) {
     el('div', { class: 'muted small', style: 'margin-bottom:14px' },
       new Date(act.startDate).toLocaleString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ` · ${sourceLabel}`),
     el('div', { class: 'detail-grid' }, items.map(([l, v]) => el('div', {}, [el('div', { class: 'label' }, l), el('div', { class: 'value' }, v)]))),
+    rpeEditor(act),
     typeEditor(act)
   );
   document.getElementById('activity-detail-dialog').showModal();
+}
+
+// ---------------------------------------------------------------------------
+// Gefühlte Anstrengung (RPE 1–10)
+// ---------------------------------------------------------------------------
+
+const RPE_LABELS = { 1: 'sehr leicht', 2: 'leicht', 3: 'locker', 4: 'angenehm', 5: 'etwas fordernd', 6: 'fordernd', 7: 'anstrengend', 8: 'sehr anstrengend', 9: 'extrem', 10: 'maximal' };
+
+async function saveRpe(id, rpe, skip = false) {
+  const res = await fetch('/api/activities/feedback', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, rpe, skip })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || 'Unbekannter Fehler');
+  const act = allActivities.find((a) => a.id === id);
+  if (act) {
+    if (rpe === null) { delete act.rpe; act.rpeSkipped = skip; } else { act.rpe = rpe; delete act.rpeSkipped; }
+  }
+}
+
+function rpeScale(current, onPick) {
+  const label = el('div', { class: 'muted small', style: 'margin-top:6px;min-height:18px' }, current ? `${current}/10 · ${RPE_LABELS[current]}` : 'Tippe von 1 (sehr leicht) bis 10 (maximal)');
+  const row = el('div', { class: 'rpe-row', role: 'group', 'aria-label': 'Gefühlte Anstrengung 1 bis 10' },
+    Array.from({ length: 10 }, (_, i) => i + 1).map((n) => el('button', {
+      type: 'button', class: `rpe-btn rpe-${n <= 3 ? 'low' : n <= 6 ? 'mid' : n <= 8 ? 'high' : 'max'}`,
+      'aria-pressed': String(current === n), 'aria-label': `${n} – ${RPE_LABELS[n]}`,
+      onclick: () => onPick(n)
+    }, String(n))));
+  return el('div', {}, [row, label]);
+}
+
+function renderRpePrompt() {
+  const now = Date.now();
+  const act = allActivities.find((a) => now - new Date(a.startDate).getTime() <= 36 * 3600 * 1000
+    && !a.rpe && !a.rpeSkipped && (a.movingTimeSec || 0) >= 600 && !['Mobility', 'Yoga', 'Walk'].includes(a.type));
+  if (!act) { mount('rpe-prompt'); return; }
+  const when = new Date(act.startDate);
+  const dayTxt = localKey(when) === localKey(new Date()) ? 'heute' : 'gestern';
+  mount('rpe-prompt', el('div', { class: 'card rpe-card' }, [
+    el('div', { class: 'card-head', style: 'margin:0 0 4px' }, [
+      el('div', { class: 'head-with-info' }, [el('h2', {}, 'Wie war dein Training?'), infoButton('rpe', 'Gefühlte Anstrengung')]),
+      el('button', { class: 'link-btn', type: 'button', onclick: async () => { try { await saveRpe(act.id, null, true); renderRpePrompt(); } catch (e) { alert(e.message); } } }, 'Überspringen')
+    ]),
+    el('div', { class: 'muted small', style: 'margin-bottom:10px' }, `${activityTitle(act)} ${dayTxt} · ${fmtDuration(act.movingTimeSec)}`),
+    rpeScale(null, async (n) => {
+      try {
+        await saveRpe(act.id, n);
+        mount('rpe-prompt', el('div', { class: 'card rpe-card' }, el('div', { class: 'small' }, `Danke! ${n}/10 gespeichert – fließt in die nächste Wochenplanung ein.`)));
+        setTimeout(() => { renderRpePrompt(); refresh(); }, 1600);
+      } catch (e) { alert('Speichern fehlgeschlagen: ' + e.message); }
+    })
+  ]));
+}
+
+function rpeEditor(act) {
+  if (['Mobility', 'Yoga'].includes(act.type)) return null;
+  const box = el('div', { style: 'margin-top:18px;padding-top:14px;border-top:1px solid var(--border)' });
+  const draw = () => {
+    box.innerHTML = '';
+    box.appendChild(el('div', { class: 'label muted small', style: 'margin-bottom:8px' }, 'Gefühlte Anstrengung'));
+    box.appendChild(rpeScale(act.rpe || null, async (n) => {
+      try { await saveRpe(act.id, n); act.rpe = n; draw(); } catch (e) { alert(e.message); }
+    }));
+  };
+  draw();
+  return box;
 }
 
 // Sportart korrigieren (z.B. "Workout" → "Dehnen & Mobilität")
@@ -1300,6 +1403,7 @@ function setupActivityUi() {
     }, 200);
   });
   setupGoalForm();
+  setupPerfForm();
   const sdDialog = document.getElementById('session-detail-dialog');
   document.getElementById('close-session-detail-btn').addEventListener('click', () => sdDialog.close());
   loadSpontanPrefs();
@@ -1355,6 +1459,53 @@ function setupActivityUi() {
 // Tab "Analyse"
 // ---------------------------------------------------------------------------
 
+function renderTrends() {
+  mount('trends-info', infoButton('trends', 'Langzeit-Trends'));
+  const t = currentState.trends;
+  const box = mount('trends');
+  if (!t) return;
+  const defs = [
+    { key: 'restingHR', title: 'Ruhepuls', unit: 'bpm', decimals: 0, lowerIsBetter: true, color: '#f28c8c', empty: 'Kommt über die Automation „Schlaf und Erholung“.' },
+    { key: 'hrv', title: 'HRV', unit: 'ms', decimals: 0, lowerIsBetter: false, color: '#9b8cf2', empty: 'Kommt über die Automation „Schlaf und Erholung“.' },
+    { key: 'runEfficiency', title: 'Lauf-Effizienz', unit: 'm/Schlag', decimals: 2, lowerIsBetter: false, color: '#d4f25c', empty: 'Braucht Läufe ab 2 km mit Pulsmessung.' }
+  ];
+  for (const d of defs) {
+    const pts = t[d.key] || [];
+    const vals = pts.filter((p) => p.value !== null);
+    const head = el('div', { class: 'trend-head' }, [el('span', { class: 'trend-title' }, d.title)]);
+    const chart = el('div', { class: 'trend-chart' });
+    const row = el('div', { class: 'trend' }, [head, chart]);
+    box.appendChild(row);
+    if (vals.length < 2) {
+      head.appendChild(el('span', { class: 'muted small' }, vals.length ? `${fmtNum(vals[0].value, d.decimals)} ${d.unit}` : '–'));
+      chart.appendChild(el('div', { class: 'muted small' }, vals.length ? 'Noch zu wenig Wochen für einen Verlauf.' : d.empty));
+      continue;
+    }
+    const last = vals[vals.length - 1];
+    // Vergleich: Schnitt der letzten 4 Wochen mit Werten vs. 4 Wochen davor... einfacher: aktuelle vs. vor ~8 Wochen
+    const recent = vals.slice(-3);
+    const older = vals.filter((p) => p.week <= addDaysKey(last.week, -56)).slice(-3);
+    let delta = null;
+    if (older.length) {
+      const avg = (a) => a.reduce((s, p) => s + p.value, 0) / a.length;
+      delta = avg(recent) - avg(older);
+    }
+    const good = delta === null || Math.abs(delta) < (d.decimals ? 0.02 : 1) ? null : (delta < 0) === d.lowerIsBetter;
+    head.appendChild(el('span', { class: 'trend-value' }, [
+      `${fmtNum(last.value, d.decimals)} ${d.unit}`,
+      delta !== null ? el('span', { class: `trend-delta ${good === null ? '' : good ? 'good' : 'bad'}` },
+        ` ${delta > 0 ? '▲' : delta < 0 ? '▼' : '■'} ${fmtNum(Math.abs(delta), d.decimals)} seit 8 Wo.`) : null
+    ]));
+    renderTrendChart(chart, pts, { color: d.color, unit: d.unit, decimals: d.decimals, label: d.title });
+  }
+}
+
+function addDaysKey(key, n) {
+  const dt = new Date(key + 'T12:00:00Z');
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
 function renderAnalysis() {
   if (!currentState) return;
   renderLoadChart(document.getElementById('load-chart'), currentState.analysis.dailyLoadSeries, 28);
@@ -1383,6 +1534,8 @@ function renderAnalysis() {
   renderVolumeChart(document.getElementById('volume-chart'), weeks);
   mount('volume-legend', ...SPORT_GROUPS.map((g) => el('span', {}, [el('span', { class: 'dot', style: `background:${g.color}` }), g.label])));
 
+  renderTrends();
+
   const flags = currentState.analysis.flags || [];
   const box = mount('flags');
   if (!flags.length) {
@@ -1403,6 +1556,63 @@ const SYNC_STALE_DAYS = 3;
 function openSettings(section) {
   document.getElementById('settings-dialog').showModal();
   if (section === 'goal') setTimeout(() => document.getElementById('goal-section').scrollIntoView({ block: 'start' }), 50);
+  if (section === 'perf') setTimeout(() => document.getElementById('perf-section').scrollIntoView({ block: 'start' }), 50);
+}
+
+// Leistung: Lauf-Bestzeit und FTP
+function renderPerfForm() {
+  const p = currentState.performance || {};
+  const form = document.getElementById('perf-form');
+  if (!form.contains(document.activeElement)) {
+    document.getElementById('perf-run-distance').value = p.runTest ? p.runTest.distance : '';
+    document.getElementById('perf-run-time').value = p.runTest ? fmtClock(p.runTest.timeSec) : '';
+    document.getElementById('perf-ftp').value = p.ftp || '';
+  }
+  const r = p.run;
+  mount('perf-run-hint', r
+    ? el('div', {}, [
+      el('div', {}, r.source === 'manual'
+        ? `Basis: ${r.basis}${p.runTest && p.runTest.distance !== '10k' ? ` (entspricht 10 km in ${r.tenK})` : ''}.`
+        : `Geschätzt aus deinen Läufen mit Puls: 10 km in ca. ${r.tenK}. Eine echte Bestzeit (auch aus einem Training, z.B. 5 km zügig) macht die Vorgaben genauer.`),
+      el('div', { style: 'margin-top:6px' }, `Locker ${r.table.easy.text} · Tempo ${r.table.tempo.text} · Schwelle ${r.table.threshold.text} · Intervalle ${r.table.interval.text}`),
+      el('div', { style: 'margin-top:4px' }, `Prognose: 5 km ${r.table.predictions['5k']} · 10 km ${r.table.predictions['10k']} · HM ${r.table.predictions.half} · Marathon ${r.table.predictions.marathon}`)
+    ])
+    : 'Trag eine aktuelle Bestzeit ein (Format mm:ss oder h:mm:ss). Ohne Eintrag wird geschätzt, sobald genug Läufe mit Puls da sind.');
+  mount('perf-ftp-hint', p.ftp
+    ? `Watt-Bereiche: locker ${Math.round(p.ftp * 0.6)}–${Math.round(p.ftp * 0.75)} W · Sweet Spot ${Math.round(p.ftp * 0.84)}–${Math.round(p.ftp * 0.94)} W · VO2max ${Math.round(p.ftp * 1.06)}–${Math.round(p.ftp * 1.2)} W.`
+    : 'FTP = Leistung, die du etwa eine Stunde halten kannst. Test auf dem Skillbike: 15 min einfahren, dann 20 min so hart wie gleichmäßig möglich – Ø-Watt × 0,95 ist deine FTP.');
+}
+
+function fmtClock(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.round(sec % 60);
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function setupPerfForm() {
+  document.getElementById('perf-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.submitter;
+    const distance = document.getElementById('perf-run-distance').value;
+    const time = document.getElementById('perf-run-time').value.trim();
+    if (distance && !time) { alert('Bitte die Zeit eintragen, z.B. 48:30.'); return; }
+    const payload = {
+      runTest: distance && time ? { distance, time } : null,
+      ftp: document.getElementById('perf-ftp').value || null
+    };
+    try {
+      const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error('Server-Fehler');
+      const body = await res.json();
+      if (distance && time && !body.athlete.runTest) { alert('Die Zeit konnte nicht gelesen werden. Format: mm:ss oder h:mm:ss'); return; }
+      document.activeElement && document.activeElement.blur();
+      await refresh();
+      if (btn) { btn.textContent = 'Gespeichert ✓'; setTimeout(() => { btn.textContent = 'Speichern'; }, 1500); }
+    } catch (err) {
+      alert('Speichern fehlgeschlagen: ' + err.message);
+    }
+  });
 }
 
 // Saisonziel-Formular
@@ -1416,6 +1626,7 @@ function renderGoalForm() {
     document.getElementById('goal-distance').value = g.distance || 'olympic';
     document.getElementById('goal-hours').value = g.weeklyHours || 6;
     document.getElementById('goal-strength').value = String(g.strengthPerWeek ?? 2);
+    document.getElementById('goal-mobility').value = String(g.mobilityPerWeek ?? 2);
     goalRestDays = Array.isArray(g.restDays) ? [...g.restDays] : [0];
   }
   renderRestDayChips();
@@ -1442,6 +1653,7 @@ function setupGoalForm() {
       distance: document.getElementById('goal-distance').value,
       weeklyHours: Number(document.getElementById('goal-hours').value) || 6,
       strengthPerWeek: Number(document.getElementById('goal-strength').value),
+      mobilityPerWeek: Number(document.getElementById('goal-mobility').value),
       restDays: goalRestDays
     };
     if (goal.date && goal.date < localKey(new Date())) {
@@ -1470,6 +1682,7 @@ function setupGoalForm() {
 function renderSettings() {
   renderLibrary();
   renderGoalForm();
+  renderPerfForm();
   const a = currentState.athlete;
   const form = document.getElementById('settings-form');
   if (!form.contains(document.activeElement)) {

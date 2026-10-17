@@ -8,6 +8,7 @@
 
 const analysis = require('./analysis');
 const recovery = require('./recovery');
+const performance = require('./performance');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -69,10 +70,32 @@ function bpm(athlete, n, pos = 0.5) {
 
 // Schritt mit Zielpuls: z = Zone, pos = Lage in der Zone
 function step(a, label, text, z, pos) {
-  return { label, text, hr: z ? bpm(a, z, pos) : null, zone: z || null };
+  return { label, text, hr: z ? bpm(a, z, pos) : null, zone: z || null, pos: typeof pos === 'number' ? pos : 0.5 };
 }
 
+// Ablauf mit Zielpuls, beim Laufen zusätzlich Tempo (min/km + km/h fürs
+// Laufband), beim Rad Watt – sofern Bestzeit bzw. FTP bekannt sind.
 function buildWorkout(sport, intensity, minutes, ctx) {
+  const w = buildWorkoutBase(sport, intensity, minutes, ctx);
+  const t = ctx.targets || {};
+  if (intensity !== 'rest' && (sport === 'run' || sport === 'bike')) {
+    w.steps = w.steps.map((st) => {
+      if (!st || !st.zone) return st;
+      const pos = typeof st.pos === 'number' ? st.pos : 0.5;
+      if (sport === 'run' && t.tenKSec) {
+        const p = performance.paceForZone(t.tenKSec, st.zone, pos);
+        return Object.assign({}, st, { pace: p.text, speed: p.kmh });
+      }
+      if (sport === 'bike' && t.ftp) {
+        return Object.assign({}, st, { watts: performance.wattsForZone(t.ftp, st.zone, pos).text });
+      }
+      return st;
+    });
+  }
+  return w;
+}
+
+function buildWorkoutBase(sport, intensity, minutes, ctx) {
   const a = ctx.athlete;
   const D = minutes;
   // Standard-Zielpulse
@@ -216,6 +239,25 @@ function buildWorkout(sport, intensity, minutes, ctx) {
     };
   }
 
+  // Dehnen & Mobilität (nach langen/harten Einheiten oder am Abend)
+  if (sport === 'mobility') {
+    const long = D >= 20;
+    const items = [
+      ['2 min', 'locker mobilisieren: Arm- und Hüftkreisen, Schulterrollen'],
+      ['2 × 45 s je Seite', 'Hüftbeuger im Ausfallschritt-Kniestand'],
+      ['2 × 45 s je Seite', 'Wade an der Wand, Knie gestreckt und leicht gebeugt'],
+      ['2 × 45 s je Seite', 'Oberschenkel hinten: Bein auf Erhöhung, Rücken gerade'],
+      ['60 s je Seite', 'Gesäß: Taube oder Bein überkreuzt im Liegen'],
+      ['60 s', 'Brustwirbelsäule: offenes Buch, Seite wechseln'],
+      long ? ['2 min', 'Faszienrolle Waden und Oberschenkel außen'] : null,
+      long ? ['60 s', 'Kindhaltung, ruhig in den Bauch atmen'] : null
+    ].filter(Boolean);
+    return {
+      title: long ? 'Dehnen & Mobilität' : 'Kurz dehnen',
+      steps: items.map(([label, text]) => ({ label, text, hr: null, zone: null }))
+    };
+  }
+
   // Krafttraining an den Technogym-Geräten (Einheiten A/B im Wechsel)
   const useA = ctx.strengthCount % 2 === 0;
   const sets = intensity === 'easy' ? '2' : '3';
@@ -240,11 +282,12 @@ const MAX_STRENGTH_MIN = 60;
 // Fester Code je Einheit, unter dem sie auf der Uhr / in der Technogym-App
 // gespeichert wird: Sportart-Buchstabe, Typ, Dauer. Beispiele: L-IN-45, R-GA-90,
 // S-TE-60, K-A, ER-30. Gleicher Code = identischer Ablauf.
-const CODE_SPORT = { swim: 'S', bike: 'R', run: 'L', strength: 'K' };
+const CODE_SPORT = { swim: 'S', bike: 'R', run: 'L', strength: 'K', mobility: 'M' };
 const CODE_TYPE = { easy: 'GA', moderate: 'TE', hard: 'IN' };
 
 function workoutCode(sport, intensity, minutes, workout) {
   if (intensity === 'rest') return `ER-${Math.min(minutes, 30)}`;
+  if (sport === 'mobility') return `M-${minutes}`;
   if (sport === 'strength') {
     const ab = workout.title.endsWith('A') ? 'A' : 'B';
     return intensity === 'easy' ? `K-${ab}-L` : `K-${ab}`;
@@ -371,7 +414,7 @@ function suggest(store, opts = {}) {
     return null;
   };
 
-  const ctx = { athlete, swimPace: swimPace(acts), strengthCount: strengthTotal };
+  const ctx = { athlete, swimPace: swimPace(acts), strengthCount: strengthTotal, targets: performance.targetsFor(store) };
   const make = (g, why, forceIntensity, forceMinutes) => {
     const sportIntensity = forceIntensity || intensity;
     let mins = forceMinutes || minutes;

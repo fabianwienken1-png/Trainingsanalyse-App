@@ -20,6 +20,7 @@
 const analysis = require('./analysis');
 const recovery = require('./recovery');
 const workouts = require('./spontaneous');
+const performance = require('./performance');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -53,8 +54,8 @@ function round1(n) {
   return Math.round(n * 10) / 10;
 }
 
-const SPORT_GROUP = { Ride: 'bike', VirtualRide: 'bike', Run: 'run', TrailRun: 'run', Swim: 'swim', WeightTraining: 'strength' };
-const GROUP_TYPE = { bike: 'Ride', run: 'Run', swim: 'Swim', strength: 'WeightTraining' };
+const SPORT_GROUP = { Ride: 'bike', VirtualRide: 'bike', Run: 'run', TrailRun: 'run', Swim: 'swim', WeightTraining: 'strength', Mobility: 'mobility', Yoga: 'mobility' };
+const GROUP_TYPE = { bike: 'Ride', run: 'Run', swim: 'Swim', strength: 'WeightTraining', mobility: 'Mobility' };
 function groupOf(type) {
   return SPORT_GROUP[type] || 'other';
 }
@@ -75,7 +76,7 @@ const DISTANCES = {
   none: { label: 'Kein Wettkampf', share: { swim: 0.22, bike: 0.43, run: 0.35 }, brick: 0 }
 };
 
-const DEFAULT_GOAL = { name: '', date: null, distance: 'olympic', weeklyHours: 6, strengthPerWeek: 2, restDays: [0] };
+const DEFAULT_GOAL = { name: '', date: null, distance: 'olympic', weeklyHours: 6, strengthPerWeek: 2, mobilityPerWeek: 2, restDays: [0] };
 
 function getGoal(athlete) {
   const g = Object.assign({}, DEFAULT_GOAL, athlete.goal || {});
@@ -83,6 +84,8 @@ function getGoal(athlete) {
   g.weeklyHours = Math.min(25, Math.max(2, Number(g.weeklyHours) || DEFAULT_GOAL.weeklyHours));
   g.strengthPerWeek = Math.min(3, Math.max(0, Math.round(Number(g.strengthPerWeek))));
   if (!Number.isFinite(g.strengthPerWeek)) g.strengthPerWeek = 2;
+  g.mobilityPerWeek = Math.min(4, Math.max(0, Math.round(Number(g.mobilityPerWeek))));
+  if (!Number.isFinite(g.mobilityPerWeek)) g.mobilityPerWeek = 2;
   g.restDays = Array.isArray(g.restDays) ? g.restDays.filter((d) => d >= 0 && d <= 6) : [0];
   if (g.restDays.length > 3) g.restDays = g.restDays.slice(0, 3);
   return g;
@@ -175,6 +178,12 @@ function computeWeekVolume(store, goal, phase, ctx) {
     } else if (ctx.acwr !== null && ctx.acwr > 1.3) {
       base = prev;
       reasons.push('Belastung leicht erhöht – Umfang wird gehalten');
+    } else if (ctx.rpe && ctx.rpe.overloaded) {
+      base = prev;
+      reasons.push(`Training fühlte sich zuletzt sehr anstrengend an (Ø ${ctx.rpe.weekAvg.toFixed(1).replace('.', ',')}/10) – Umfang wird gehalten`);
+    } else if (ctx.rpe && ctx.rpe.easyTooHard) {
+      base = prev;
+      reasons.push(`Lockere Einheiten fühlten sich zu schwer an (Ø ${ctx.rpe.easyAvg.toFixed(1).replace('.', ',')}/10) – Umfang wird gehalten`);
     } else if (ctx.completionRate !== null && ctx.completionRate < 70) {
       base = prev;
       reasons.push(`Nur ${Math.round(ctx.completionRate)} % der letzten Woche geschafft – Umfang wird gehalten`);
@@ -202,6 +211,9 @@ function computeWeekVolume(store, goal, phase, ctx) {
   if (ctx.recoveryStatus === 'eingeschränkt' && !reasons[0].startsWith('Erholung')) {
     target *= 0.9;
     reasons.push('Erholung eingeschränkt – diese Woche −10 %');
+  } else if (ctx.rpe && ctx.rpe.overloaded && ctx.rpe.weekAvg >= 8.5) {
+    target *= 0.9;
+    reasons.push('sehr hohe gefühlte Anstrengung – diese Woche −10 %');
   }
   return { baseMinutes: Math.round(base), enduranceMinutes: Math.round(target), reasons };
 }
@@ -401,7 +413,7 @@ function buildWeek(store, weekStartKey, firstDay, opts = {}) {
   }
   const report = analysis.buildAnalysisReport(store.activities, athlete);
   const rec = recovery.computeRecovery(store.health, now);
-  const ctx = { now, acwr: report.acwr.acwr, recoveryStatus: rec ? rec.status : null, completionRate: opts.completionRate ?? null };
+  const ctx = { now, acwr: report.acwr.acwr, recoveryStatus: rec ? rec.status : null, completionRate: opts.completionRate ?? null, rpe: performance.rpeSignal(store, now) };
 
   const vol = opts.volume || computeWeekVolume(store, goal, phase, ctx);
   const freeDays = [0, 1, 2, 3, 4, 5, 6].filter((d) => !goal.restDays.includes(d));
@@ -432,6 +444,25 @@ function buildWeek(store, weekStartKey, firstDay, opts = {}) {
     for (const c of composed) if (keptQuality > 0 && c.kind === 'quality') { c.kind = 'easy'; c.intensity = 'easy'; keptQuality--; }
   }
   const placed = placeSessions(composed, raceGoal, firstDay);
+
+  // Dehnen & Mobilität: bevorzugt an Tagen mit langer oder harter Einheit
+  let mobility = ['race', 'post'].includes(phase.key) ? Math.min(1, goal.mobilityPerWeek) : goal.mobilityPerWeek;
+  if (scale < 1) mobility = Math.round(mobility * scale);
+  if (opts.kept) mobility -= opts.kept.filter((k) => k.sport === 'Mobility').length;
+  const dayScore = (d) => {
+    const list = placed.filter((p) => p._day === d);
+    if (list.some((p) => p.kind === 'long')) return 0;
+    if (list.some((p) => p.kind === 'quality' || p.kind === 'brick')) return 1;
+    return list.length ? 2 : 3;
+  };
+  const mobDays = [...new Set(placed.map((p) => p._day))]
+    .filter((d) => d >= firstDay && d !== raceDay)
+    .sort((x, y) => dayScore(x) - dayScore(y) || y - x)
+    .slice(0, Math.max(0, mobility));
+  for (const d of mobDays) {
+    placed.push({ sport: 'mobility', kind: 'mobility', intensity: 'easy', minutes: dayScore(d) === 0 ? 20 : 15, _day: d });
+  }
+  placed.sort((x, y) => x._day - y._day || (x.kind === 'mobility') - (y.kind === 'mobility'));
   if (raceDay !== null && raceDay >= firstDay && raceDay <= 6) {
     placed.push({ sport: 'race', kind: 'race', intensity: 'hard', minutes: DISTANCES[goal.distance].raceMin || { sprint: 80, olympic: 150, half: 330, full: 720 }[goal.distance] || 150, _day: raceDay });
   }
@@ -457,7 +488,7 @@ function buildWeek(store, weekStartKey, firstDay, opts = {}) {
       intensity: s.intensity,
       targetDurationMin: s.minutes,
       targetLoad: round1(s.minutes * getIntensityFactor(type, s.intensity)),
-      description: describeSession(type, s.intensity),
+      description: s.sport === 'mobility' ? 'Dehnen & Mobilität' : describeSession(type, s.intensity),
       status: 'planned',
       matchedActivityId: null
     };
@@ -476,7 +507,7 @@ function buildWeek(store, weekStartKey, firstDay, opts = {}) {
     distance: goal.distance,
     baseMinutes: vol.baseMinutes,
     targetMinutes: enduranceMinutes + sessions.filter((s) => s.sport === 'WeightTraining').reduce((a, s) => a + s.targetDurationMin, 0),
-    plannedMinutes: sessions.reduce((a, s) => a + s.targetDurationMin, 0),
+    plannedMinutes: sessions.filter((s) => s.kind !== 'mobility').reduce((a, s) => a + s.targetDurationMin, 0),
     isDeload: ['recovery', 'taper', 'race', 'post'].includes(phase.key),
     reason: `${phase.label}${weeksText}. ${vol.reasons.join(' · ')}.`,
     acwr: report.acwr,
@@ -569,8 +600,9 @@ function evaluatePreviousWeek(store) {
     if (match) used.add(match.id);
     return { ...session, status: match ? 'done' : 'missed', matchedActivityId: match ? match.id : null };
   });
-  const doneCount = evaluated.filter((s) => s.status === 'done').length;
-  const completionRate = evaluated.length > 0 ? doneCount / evaluated.length : 1;
+  const counted = evaluated.filter((s) => s.kind !== 'mobility'); // Dehnen zählt nicht zur Erfüllungsquote
+  const doneCount = counted.filter((s) => s.status === 'done').length;
+  const completionRate = counted.length > 0 ? doneCount / counted.length : 1;
   const summary = analysis.computeWeeklySummary(activities, athlete, weekStart);
   return { weekStart: plan.currentWeekStart, sessions: evaluated, completionRate: round1(completionRate * 100), summary, phase: plan.lastDecision ? plan.lastDecision.phase : null };
 }
@@ -603,11 +635,11 @@ function autoMarkDone(store, now = new Date()) {
 // Änderungen an Max-/Ruhepuls sofort auswirken)
 function decorateSessions(store) {
   const athlete = store.athlete;
-  const ctxBase = { athlete, swimPace: workouts.swimPace(store.activities || []) };
+  const ctxBase = { athlete, swimPace: workouts.swimPace(store.activities || []), targets: performance.targetsFor(store) };
   const lib = store.workoutLibrary || {};
   return (store.plan.sessions || []).map((s) => {
     const g = groupOf(s.sport);
-    if (!['swim', 'bike', 'run', 'strength'].includes(g)) return s;
+    if (!['swim', 'bike', 'run', 'strength', 'mobility'].includes(g)) return s;
     const ctx = Object.assign({}, ctxBase, { strengthCount: s.variant === 'B' ? 1 : 0 });
     const w = workouts.buildWorkout(g, s.intensity, s.targetDurationMin, ctx);
     let title = w.title;
@@ -619,10 +651,12 @@ function decorateSessions(store) {
       steps.unshift({ label: 'direkt', text: 'unmittelbar nach dem Rad loslaufen – Schuhe wechseln, keine Pause. Die ersten Minuten fühlen sich schwer an, das ist normal und genau der Trainingsreiz.', hr: null, zone: null });
     }
     const main = steps.filter((x) => x.hr).sort((a, b) => b.hr - a.hr)[0];
+    const mainT = steps.filter((x) => x.zone && (x.pace || x.watts)).sort((a, b) => b.zone - a.zone || (b.pos || 0) - (a.pos || 0))[0];
     return Object.assign({}, s, {
       workout: {
         title, code, device: g === 'strength' ? 'technogym' : 'watch', created: !!lib[code],
-        distance: w.distance || null, steps, mainHr: main ? main.hr : null
+        distance: w.distance || null, steps, mainHr: main ? main.hr : null,
+        mainPace: mainT && mainT.pace ? mainT.pace : null, mainWatts: mainT && mainT.watts ? mainT.watts : null
       }
     });
   });
@@ -641,18 +675,24 @@ function generateNextWeekPlan(store) {
 // wenn die Erholung eingeschränkt ist oder die letzte Nacht sehr kurz war und
 // eine harte Einheit ansteht. todayKey = 'YYYY-MM-DD' in Nutzer-Zeitzone.
 function suggestAdjustment(store, rec, todayKey) {
-  if (!rec || !store.plan || !Array.isArray(store.plan.sessions)) return null;
+  if (!store.plan || !Array.isArray(store.plan.sessions)) return null;
   const session = store.plan.sessions.find(
-    (s) => s.day === todayKey && s.status === 'planned' && !s.adjusted && s.intensity !== 'easy' && s.kind !== 'race'
+    (s) => s.day === todayKey && s.status === 'planned' && !s.adjusted && s.intensity !== 'easy' && !['race', 'mobility'].includes(s.kind)
   );
   if (!session) return null;
-  const shortNight = rec.lastNight && rec.lastNight.total < 6;
-  const trigger = rec.status === 'eingeschränkt' || (shortNight && session.intensity === 'hard');
+  // Gestern als (fast) maximal anstrengend bewertet?
+  const yesterday = new Date(new Date(todayKey + 'T12:00:00Z').getTime() - DAY_MS).toISOString().slice(0, 10);
+  const heavyYesterday = (store.activities || []).find((a) => a.rpe >= 9 && analysis.dayKeyOf(new Date(a.startDate)) === yesterday);
+  const shortNight = rec && rec.lastNight && rec.lastNight.total < 6;
+  const limited = rec && rec.status === 'eingeschränkt';
+  const trigger = limited || (shortNight && session.intensity === 'hard') || (heavyYesterday && session.intensity === 'hard');
   if (!trigger) return null;
   const easy = easyVersion(session);
-  const reason = rec.status === 'eingeschränkt'
+  const reason = limited
     ? `Deine Erholung ist eingeschränkt: ${rec.reasons.join(', ')}.`
-    : `Du hast letzte Nacht nur ${Math.floor(rec.lastNight.total)}:${String(Math.round((rec.lastNight.total % 1) * 60)).padStart(2, '0')} h geschlafen.`;
+    : shortNight
+      ? `Du hast letzte Nacht nur ${Math.floor(rec.lastNight.total)}:${String(Math.round((rec.lastNight.total % 1) * 60)).padStart(2, '0')} h geschlafen.`
+      : `Du hast dein Training gestern mit ${heavyYesterday.rpe}/10 bewertet – heute besser locker.`;
   return {
     sessionId: session.id,
     sport: session.sport,

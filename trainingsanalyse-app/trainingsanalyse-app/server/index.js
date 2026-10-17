@@ -23,6 +23,7 @@ const store = require('./store');
 const strava = require('./strava');
 const analysis = require('./analysis');
 const planner = require('./planner');
+const performance = require('./performance');
 const healthImport = require('./health-import');
 const healthAutoExport = require('./health-auto-export');
 const dedupe = require('./dedupe');
@@ -229,6 +230,9 @@ route('GET', '/api/state', async (req, res) => {
     healthMetrics: { lastImportAt: (s.health && s.health.lastImportAt) || null },
     plan: Object.assign({}, s.plan, { sessions: planner.decorateSessions(s), history: (s.plan.history || []).slice(0, 8) }),
     goal: planner.getGoal(s.athlete),
+    performance: performanceInfo(s),
+    rpe: performance.rpeSignal(s),
+    trends: performance.trends(s),
     analysis: report
   });
 });
@@ -419,6 +423,39 @@ route('POST', '/api/plan/adjust-session', async (req, res) => {
 // health-import.js/health-auto-export.js - sonst für immer in der App
 // stehen blieben würden). Kein Pfad-Parameter-Routing im einfachen Router hier,
 // daher als Query-Parameter statt "/api/activities/:id".
+function performanceInfo(s) {
+  const run = performance.runPerformance(s);
+  return {
+    run: run ? Object.assign({}, run, { tenK: performance.formatTime(run.tenKSec), table: performance.paceTable(run.tenKSec) }) : null,
+    runTest: s.athlete.runTest || null,
+    ftp: s.athlete.ftp || null
+  };
+}
+
+// Gefühlte Anstrengung (RPE 1–10) zu einer Aktivität speichern; rpe null = löschen
+route('POST', '/api/activities/feedback', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const s = await loadStore();
+  const act = s.activities.find((a) => a.id === body.id);
+  if (!act) return sendError(res, 404, 'Aktivität nicht gefunden.');
+  if (body.rpe === null) {
+    delete act.rpe;
+    act.rpeSkipped = !!body.skip;
+  } else {
+    const rpe = Math.round(Number(body.rpe));
+    if (!(rpe >= 1 && rpe <= 10)) return sendError(res, 400, 'RPE muss zwischen 1 und 10 liegen.');
+    act.rpe = rpe;
+    delete act.rpeSkipped;
+  }
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, rpe: act.rpe || null });
+});
+
 // Sportart einer Aktivität korrigieren. learn=true: alle Einträge mit demselben
 // Namen aus Apple Health (jetzt und künftig) genauso einordnen.
 route('POST', '/api/activities/type', async (req, res) => {
@@ -620,6 +657,17 @@ route('POST', '/api/settings', async (req, res) => {
   }
   athleteHr.updateAutoHR(s, { force: true });
 
+  // Laufleistung (Bestzeit) und FTP
+  if (body.runTest !== undefined) {
+    const t = body.runTest;
+    const sec = t ? performance.parseTime(t.time) : null;
+    s.athlete.runTest = t && performance.RUN_DISTANCES[t.distance] && sec ? { distance: t.distance, timeSec: sec, date: new Date().toISOString().slice(0, 10) } : null;
+  }
+  if (body.ftp !== undefined) {
+    const f = Math.round(Number(body.ftp));
+    s.athlete.ftp = f >= 80 && f <= 600 ? f : null;
+  }
+
   // Saisonziel
   let replanned = false;
   if (body.goal && typeof body.goal === 'object') {
@@ -631,6 +679,7 @@ route('POST', '/api/settings', async (req, res) => {
       distance: ['sprint', 'olympic', 'half', 'full', 'run10k', 'runHalf', 'marathon', 'none'].includes(g.distance) ? g.distance : 'olympic',
       weeklyHours: Math.min(25, Math.max(2, Number(g.weeklyHours) || 6)),
       strengthPerWeek: Math.min(3, Math.max(0, Math.round(Number(g.strengthPerWeek) || 0))),
+      mobilityPerWeek: Math.min(4, Math.max(0, Math.round(Number(g.mobilityPerWeek ?? 2) || 0))),
       restDays: Array.isArray(g.restDays) ? [...new Set(g.restDays.map(Number).filter((d) => d >= 0 && d <= 6))].slice(0, 3) : [0]
     };
     planner.replanCurrentWeek(s);

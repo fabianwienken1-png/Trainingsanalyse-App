@@ -53,6 +53,7 @@
       <div id="form-card"></div>
       <div id="recovery-card"></div>
       <div id="plan-suggestion"></div>
+      <div id="rpe-prompt"></div>
       <div id="stat-tiles" class="tiles"></div>
       <div id="week-card"></div>
       <button class="card spontan-btn" id="open-spontan-btn" type="button">
@@ -123,6 +124,10 @@
         <div class="card-head"><h2>Umfang pro Woche</h2><span class="muted small">8 Wochen · Stunden</span></div>
         <div id="volume-chart"></div>
         <div class="legend" id="volume-legend"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div class="head-with-info"><h2>Langzeit-Trends</h2><span id="trends-info"></span></div><span class="muted small">26 Wochen</span></div>
+        <div id="trends"></div>
       </div>
       <div class="card">
         <div class="card-head"><h2>Auffälligkeiten</h2></div>
@@ -201,11 +206,45 @@
         </select>
       </div>
       <div class="form-row">
+        <label for="goal-mobility">Dehnen &amp; Mobilität pro Woche</label>
+        <select id="goal-mobility">
+          <option value="0">keine</option>
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+          <option value="3">3×</option>
+          <option value="4">4×</option>
+        </select>
+      </div>
+      <div class="form-row">
         <span class="label-like" id="rest-label">Feste Ruhetage</span>
         <div class="chip-row wrap" id="goal-restdays" role="group" aria-labelledby="rest-label"></div>
       </div>
       <p class="muted small" style="margin:0">Der Plan baut darauf auf: Phasen bis zum Wettkampf (Grundlage → Aufbau → Vorbereitung → Tapering), Triathlon-Mix nach Distanz und Steigerung um max. 10 % pro Woche. Speichern plant die laufende Woche neu.</p>
       <button type="submit" class="primary-btn">Speichern &amp; Woche neu planen</button>
+    </form>
+
+    <h3 class="section-title" id="perf-section">Leistung</h3>
+    <form id="perf-form" class="card form-card">
+      <div class="form-row">
+        <label for="perf-run-distance">Laufen: aktuelle Bestzeit</label>
+        <div style="display:flex;gap:8px">
+          <select id="perf-run-distance" style="flex:1">
+            <option value="">automatisch schätzen</option>
+            <option value="5k">5 km</option>
+            <option value="10k">10 km</option>
+            <option value="half">Halbmarathon</option>
+            <option value="marathon">Marathon</option>
+          </select>
+          <input id="perf-run-time" type="text" inputmode="numeric" placeholder="z.B. 48:30" style="flex:1" />
+        </div>
+        <div class="field-hint" id="perf-run-hint"></div>
+      </div>
+      <div class="form-row">
+        <label for="perf-ftp">Rad: FTP (Watt)</label>
+        <input id="perf-ftp" type="number" inputmode="numeric" min="80" max="600" placeholder="z.B. 220" />
+        <div class="field-hint" id="perf-ftp-hint"></div>
+      </div>
+      <button type="submit" class="primary-btn">Speichern</button>
     </form>
 
     <h3 class="section-title">Athlet</h3>
