@@ -7,7 +7,7 @@
 //
 // CACHE_NAME wird bei jedem Update dieser Datei erhöht - das sorgt zusätzlich
 // dafür, dass activate() den alten Cache zuverlässig verwirft.
-const CACHE_NAME = 'trainingsanalyse-shell-v14';
+const CACHE_NAME = 'trainingsanalyse-shell-v15';
 const SHELL_FILES = [
   '/',
   '/css/style.css',

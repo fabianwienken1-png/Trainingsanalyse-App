@@ -517,3 +517,18 @@ select {
 .step-hr.muted { color: var(--muted); font-weight: 600; font-size: 14px; }
 .plan-hr { color: #f2685c; font-weight: 600; white-space: nowrap; }
 .heart { font-size: 0.85em; }
+
+/* ---------- Login ---------- */
+
+.login-screen {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: calc(var(--safe-top) + 24px) 24px calc(var(--safe-bottom) + 24px);
+}
+.login-screen[hidden], #app-root[hidden], .tabbar[hidden] { display: none; }
+.login-box { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 14px; text-align: center; }
+.login-icon { width: 72px; height: 72px; border-radius: 18px; margin: 0 auto 4px; }
+.login-box h1 { margin: 0; font-family: var(--font-num); font-weight: 700; font-size: 32px; }
+.login-box p { margin: 0 0 8px; }
+.login-box input { text-align: center; font-size: 18px; min-height: 52px; }
+.login-error { min-height: 20px; color: var(--danger); font-size: 14px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

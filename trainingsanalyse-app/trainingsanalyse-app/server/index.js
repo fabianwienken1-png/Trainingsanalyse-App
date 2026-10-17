@@ -27,6 +27,7 @@ const healthImport = require('./health-import');
 const healthAutoExport = require('./health-auto-export');
 const dedupe = require('./dedupe');
 const recovery = require('./recovery');
+const auth = require('./auth');
 const spontaneous = require('./spontaneous');
 
 const PORT = process.env.PORT || 3000;
@@ -686,8 +687,40 @@ route('POST', '/webhook', async (req, res) => {
   }
 });
 
+// Öffentlicher Keep-alive für UptimeRobot: liest einmal aus der Datenbank, damit
+// Render UND Supabase wach bleiben – gibt aber keine Daten heraus.
 route('GET', '/api/health', async (req, res) => {
-  sendJson(res, 200, { ok: true, time: new Date().toISOString() });
+  const s = await loadStore();
+  sendJson(res, 200, { ok: true, activities: s.activities.length > 0, time: new Date().toISOString() });
+});
+
+// ---------- Anmeldung ----------
+
+route('GET', '/api/auth-status', async (req, res) => {
+  sendJson(res, 200, { enabled: auth.enabled(), authenticated: auth.isAuthenticated(req) });
+});
+
+route('POST', '/api/login', async (req, res) => {
+  if (!auth.enabled()) return sendJson(res, 200, { ok: true });
+  if (auth.isBlocked(req)) return sendError(res, 429, 'Zu viele Fehlversuche – bitte in 15 Minuten erneut versuchen.');
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültige Anfrage.');
+  }
+  if (!auth.checkPassword(body && body.password)) {
+    auth.recordFailure(req);
+    console.warn(`[auth] Fehlgeschlagener Login von ${auth.clientIp(req)}`);
+    return sendError(res, 401, 'Falsches Passwort.');
+  }
+  res.setHeader('Set-Cookie', auth.sessionCookie(req));
+  sendJson(res, 200, { ok: true });
+});
+
+route('POST', '/api/logout', async (req, res) => {
+  res.setHeader('Set-Cookie', auth.clearCookie(req));
+  sendJson(res, 200, { ok: true });
 });
 
 // ---------- Server ----------
@@ -714,6 +747,11 @@ const server = http.createServer(async (req, res) => {
     // standardmäßig HEAD statt GET schicken, um Bandbreite zu sparen) - ohne
     // das würde jeder Wach-halt-Ping fälschlich als 404 gewertet.
     const routeMethod = req.method === 'HEAD' ? 'GET' : req.method;
+
+    if (auth.requiresAuth(pathname) && !auth.isAuthenticated(req)) {
+      sendError(res, 401, 'Bitte anmelden.');
+      return;
+    }
 
     const matched = matchRoute(routeMethod, pathname);
     if (matched) {

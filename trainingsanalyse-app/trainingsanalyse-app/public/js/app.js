@@ -190,8 +190,74 @@ let allActivities = [];
 let activityTotal = 0;
 let lastRefreshAt = 0;
 
+// ---------------------------------------------------------------------------
+// Anmeldung
+// ---------------------------------------------------------------------------
+
+class AuthError extends Error {}
+
+// Jede API-Antwort mit 401 → Login-Bildschirm zeigen
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (input, init) => {
+  const res = await nativeFetch(input, init);
+  const url = typeof input === 'string' ? input : input.url;
+  if (res.status === 401 && url.includes('/api/') && !url.includes('/api/login')) showLogin();
+  return res;
+};
+
+let authEnabled = false;
+
+function showLogin() {
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  document.getElementById('login-screen').hidden = false;
+  document.getElementById('app-root').hidden = true;
+  document.querySelector('.tabbar').hidden = true;
+  setTimeout(() => document.getElementById('login-password').focus(), 50);
+}
+
+function hideLogin() {
+  document.getElementById('login-screen').hidden = true;
+  document.getElementById('app-root').hidden = false;
+  document.querySelector('.tabbar').hidden = false;
+}
+
+function setupLogin() {
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('login-password');
+    const err = document.getElementById('login-error');
+    const btn = e.submitter || e.target.querySelector('button');
+    err.textContent = '';
+    btn.disabled = true;
+    try {
+      const res = await nativeFetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: input.value })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Anmeldung fehlgeschlagen.');
+      }
+      input.value = '';
+      hideLogin();
+      await refresh();
+    } catch (ex) {
+      err.textContent = ex.message;
+      input.select();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    await nativeFetch('/api/logout', { method: 'POST' });
+    showLogin();
+  });
+}
+
 async function fetchJson(url, errMsg) {
   const res = await fetch(url);
+  if (res.status === 401) throw new AuthError('Nicht angemeldet');
   if (!res.ok) throw new Error(errMsg);
   return res.json();
 }
@@ -1458,10 +1524,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('hashchange', showView);
   showView();
 
+  setupLogin();
   try {
-    await refresh();
+    const st = await nativeFetch('/api/auth-status').then((r) => r.json());
+    authEnabled = !!st.enabled;
+    document.getElementById('logout-row').hidden = !authEnabled;
+    if (!st.authenticated) {
+      showLogin();
+    } else {
+      await refresh();
+    }
   } catch (err) {
-    showLoadError(err);
+    if (!(err instanceof AuthError)) showLoadError(err);
   }
 
   // Beim Zurückkehren in die App (z.B. nach einem Training) Daten auffrischen

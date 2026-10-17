@@ -22,6 +22,18 @@
 </head>
 <body>
 
+<div id="login-screen" class="login-screen" hidden>
+  <form id="login-form" class="login-box">
+    <img src="/icons/icon-192.png" alt="" class="login-icon" width="72" height="72" />
+    <h1>Trainingsanalyse</h1>
+    <p class="muted">Bitte mit deinem Passwort anmelden.</p>
+    <label for="login-password" class="sr-only">Passwort</label>
+    <input id="login-password" type="password" autocomplete="current-password" placeholder="Passwort" required />
+    <div id="login-error" class="login-error" role="alert"></div>
+    <button type="submit" class="primary-btn">Anmelden</button>
+  </form>
+</div>
+
 <div id="app-root">
 
   <!-- ============ HEUTE ============ -->
@@ -205,6 +217,9 @@
       <div>
         <p class="muted small" style="margin-top:0">Lädt alle Trainingsdaten als JSON-Datei herunter.</p>
         <button type="button" class="secondary-btn" id="export-backup-btn">Backup exportieren</button>
+      </div>
+      <div id="logout-row" hidden>
+        <button type="button" class="secondary-btn" id="logout-btn">Abmelden</button>
       </div>
     </div>
   </div>
