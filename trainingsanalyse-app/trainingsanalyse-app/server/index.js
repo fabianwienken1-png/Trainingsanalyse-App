@@ -28,6 +28,7 @@ const healthAutoExport = require('./health-auto-export');
 const dedupe = require('./dedupe');
 const recovery = require('./recovery');
 const auth = require('./auth');
+const athleteHr = require('./athlete-hr');
 const spontaneous = require('./spontaneous');
 
 const PORT = process.env.PORT || 3000;
@@ -44,6 +45,18 @@ console.log(
 // Single-User-App ist das performant genug.
 async function loadStore() {
   return store.load();
+}
+
+// Schreib-Warteschlange: Alle Daten liegen als ein Dokument in Supabase
+// (laden → ändern → speichern). Laufen zwei Anfragen gleichzeitig (z.B. die
+// Workout- und die Schlaf-Automation in derselben Minute), würde die zweite die
+// Änderungen der ersten überschreiben. Deshalb werden alle ändernden Anfragen
+// strikt nacheinander abgearbeitet.
+let writeChain = Promise.resolve();
+function withWriteLock(fn) {
+  const run = writeChain.then(fn, fn);
+  writeChain = run.catch(() => {});
+  return run;
 }
 async function saveStore(s) {
   return store.save(s);
@@ -180,6 +193,11 @@ function matchRoute(method, pathname) {
 
 route('GET', '/api/state', async (req, res) => {
   const s = await loadStore();
+  const hrChanges = athleteHr.updateAutoHR(s);
+  if (Object.keys(hrChanges).length) {
+    console.log('[puls] automatisch aktualisiert:', JSON.stringify(hrChanges));
+    await saveStore(s);
+  }
   const report = analysis.buildAnalysisReport(s.activities, s.athlete);
   const rec = recovery.computeRecovery(s.health);
   if (rec && rec.status === 'eingeschränkt') {
@@ -482,6 +500,8 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
 
   // Schlaf / HRV / Ruhepuls (zweite Automation mit Datentyp "Gesundheitsmetriken")
   const metricCounts = recovery.mergeHealthMetrics(s, body);
+  const hrChanges = athleteHr.updateAutoHR(s);
+  if (Object.keys(hrChanges).length) console.log('[puls] automatisch aktualisiert:', JSON.stringify(hrChanges));
   const metricsMerged = metricCounts.sleep + metricCounts.hrv + metricCounts.restingHR > 0 || !!metricCounts.payloadOnly;
   if (metricCounts.payloadOnly) {
     console.log('[health-auto-export] Gesundheitsmetriken empfangen, aber nichts erkannt:', JSON.stringify(s.health.lastPayload.metrics));
@@ -496,7 +516,7 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
     console.log(`[dedupe] ${deduped.length} doppelte/zu kurze Einträge beim Import entfernt.`);
   }
 
-  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0 || metricsMerged) {
+  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0 || metricsMerged || Object.keys(hrChanges).length > 0) {
     await saveStore(s);
   }
 
@@ -546,11 +566,23 @@ route('POST', '/api/settings', async (req, res) => {
     'deloadEveryNWeeks',
     'sessionsPerWeekDefault'
   ];
+  // Puls: geänderter Wert = manuell, leeres Feld oder "auto" = wieder automatisch
+  for (const key of ['maxHR', 'restingHR']) {
+    const srcKey = key + 'Source';
+    if (body[key + 'Auto'] === true || body[key] === null || body[key] === '') {
+      s.athlete[srcKey] = 'auto';
+      if (key === 'restingHR') s.athlete.restingHRUpdatedAt = null;
+      delete body[key];
+    } else if (body[key] !== undefined && Number(body[key]) !== Number(s.athlete[key])) {
+      s.athlete[srcKey] = 'manual';
+    }
+  }
   for (const key of allowed) {
     if (body[key] !== undefined && body[key] !== null && body[key] !== '') {
       s.athlete[key] = body[key];
     }
   }
+  athleteHr.updateAutoHR(s, { force: true });
   await saveStore(s);
   sendJson(res, 200, { athlete: s.athlete });
 });
@@ -755,7 +787,9 @@ const server = http.createServer(async (req, res) => {
 
     const matched = matchRoute(routeMethod, pathname);
     if (matched) {
-      await matched.handler(req, res, urlObj);
+      const mutates = routeMethod !== 'GET' || pathname === '/api/state';
+      if (mutates) await withWriteLock(() => matched.handler(req, res, urlObj));
+      else await matched.handler(req, res, urlObj);
       return;
     }
 

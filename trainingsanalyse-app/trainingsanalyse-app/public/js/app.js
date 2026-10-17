@@ -1291,6 +1291,8 @@ function renderSettings() {
     document.getElementById('setting-sessions').value = a.sessionsPerWeekDefault || 4;
   }
 
+  renderHrHints(a);
+
   // Health Auto Export
   const hc = currentState.appleHealth;
   const importUrl = `${window.location.origin}/api/import/health-auto-export?token=${hc.importToken}`;
@@ -1339,6 +1341,31 @@ function renderSettings() {
       el('div', { class: 'muted small', style: 'margin-bottom:12px' }, 'Nicht verbunden. Nur nötig, wenn du Daten direkt aus Strava holen willst (kostenpflichtige API).'),
       el('a', { class: 'secondary-btn', href: '/auth/strava', style: 'display:flex;align-items:center;justify-content:center;text-decoration:none' }, 'Mit Strava verbinden')
     );
+  }
+}
+
+function renderHrHints(a) {
+  const manual = (src) => src === 'manual';
+  mount('maxhr-hint', manual(a.maxHRSource)
+    ? el('span', {}, ['Von dir eingetragen · ', el('button', { class: 'link-btn', type: 'button', onclick: () => resetHrAuto('maxHR') }, 'wieder automatisch')])
+    : el('span', {}, 'Automatisch: höchster Wert aus deinen Trainings, der von mindestens einem zweiten Training bestätigt wird – einzelne Messfehler zählen nicht.'));
+  const upd = a.restingHRUpdatedAt ? ` · zuletzt ${new Date(a.restingHRUpdatedAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })}` : '';
+  mount('restinghr-hint', manual(a.restingHRSource)
+    ? el('span', {}, ['Von dir eingetragen · ', el('button', { class: 'link-btn', type: 'button', onclick: () => resetHrAuto('restingHR') }, 'wieder automatisch')])
+    : el('span', {}, `Automatisch: Ø der letzten 14 Tage von deiner Watch, wöchentlich aktualisiert${upd}.`));
+}
+
+async function resetHrAuto(key) {
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [key + 'Auto']: true })
+    });
+    if (!res.ok) throw new Error('Server-Fehler');
+    await refresh();
+  } catch (err) {
+    alert('Zurücksetzen fehlgeschlagen: ' + err.message);
   }
 }
 

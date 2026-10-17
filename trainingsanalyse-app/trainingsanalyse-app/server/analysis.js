@@ -24,8 +24,15 @@ const FALLBACK_INTENSITY_PER_MIN = {
   default: 5
 };
 
+// Kalendertage in der Zeitzone des Nutzers (der Server läuft in UTC – ohne
+// Umrechnung landet z.B. ein Training um 0:30 Uhr am Vortag).
+const USER_TZ = process.env.USER_TIMEZONE || 'Europe/Berlin';
+function dayKeyOf(date) {
+  return date.toLocaleDateString('sv-SE', { timeZone: USER_TZ }); // 'YYYY-MM-DD'
+}
+
 function toDateKey(isoString) {
-  return isoString.slice(0, 10); // 'YYYY-MM-DD'
+  return dayKeyOf(new Date(isoString));
 }
 
 // Banister-TRIMP (exponentiell gewichtet). HRr = Herzfrequenzreserve-Anteil (0..1).
@@ -74,7 +81,7 @@ function sumLoadInWindow(dailyLoadSeries, endDate, windowDays) {
   let sum = 0;
   for (let i = 0; i < windowDays; i++) {
     const d = new Date(endDate.getTime() - i * DAY_MS);
-    const key = d.toISOString().slice(0, 10);
+    const key = dayKeyOf(d);
     sum += dailyLoadSeries.get(key) || 0;
   }
   return sum;
@@ -129,7 +136,7 @@ function computeMonotonyStrain(dailyLoadSeries, asOfDate) {
   const values = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(asOfDate.getTime() - i * DAY_MS);
-    const key = d.toISOString().slice(0, 10);
+    const key = dayKeyOf(d);
     values.push(dailyLoadSeries.get(key) || 0);
   }
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
@@ -146,20 +153,21 @@ function round1(n) {
 }
 
 function startOfWeek(date) {
-  // Montag als Wochenstart
-  const d = new Date(date);
+  // Montag als Wochenstart (nach Kalendertag des Nutzers). Rückgabe: Date um
+  // 00:00 UTC dieses Tages, damit toISOString().slice(0, 10) den Tag liefert.
+  const d = new Date(dayKeyOf(new Date(date)) + 'T00:00:00Z');
   const day = d.getUTCDay(); // 0=So, 1=Mo, ...
   const diff = (day === 0 ? -6 : 1) - day;
   d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(0, 0, 0, 0);
   return d;
 }
 
 function computeWeeklySummary(activities, athlete, weekStartDate) {
-  const weekEnd = new Date(weekStartDate.getTime() + 7 * DAY_MS);
+  const startKey = weekStartDate.toISOString().slice(0, 10);
+  const endKey = new Date(weekStartDate.getTime() + 7 * DAY_MS).toISOString().slice(0, 10);
   const inWeek = activities.filter((a) => {
-    const t = new Date(a.startDate).getTime();
-    return t >= weekStartDate.getTime() && t < weekEnd.getTime();
+    const k = toDateKey(a.startDate);
+    return k >= startKey && k < endKey;
   });
   const bySport = {};
   let totalLoad = 0;
@@ -279,5 +287,6 @@ module.exports = {
   computeSportFrequency,
   buildAnalysisReport,
   startOfWeek,
+  dayKeyOf,
   MIN_HISTORY_DAYS_FOR_ACWR
 };

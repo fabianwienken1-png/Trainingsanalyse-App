@@ -532,3 +532,6 @@ select {
 .login-box input { text-align: center; font-size: 18px; min-height: 52px; }
 .login-error { min-height: 20px; color: var(--danger); font-size: 14px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.field-hint { font-size: 12px; line-height: 1.4; color: var(--muted); }
+.link-btn { background: none; border: none; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; min-height: 24px; }
