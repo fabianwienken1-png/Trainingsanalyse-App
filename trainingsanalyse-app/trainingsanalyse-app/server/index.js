@@ -204,6 +204,7 @@ route('GET', '/api/state', async (req, res) => {
     recovery: rec,
     planSuggestion: planner.suggestAdjustment(s, rec, recovery.dayKey(new Date())),
     sleepSeries: recovery.sleepSeries(s.health, 28),
+    workoutLibrary: s.workoutLibrary || {},
     healthMetrics: { lastImportAt: (s.health && s.health.lastImportAt) || null },
     plan: s.plan,
     analysis: report
@@ -345,6 +346,31 @@ route('GET', '/api/suggest', async (req, res, urlObj) => {
     minutes: urlObj.searchParams.get('minutes'),
     sport: urlObj.searchParams.get('sport')
   }));
+});
+
+// Merkliste der Einheiten-Codes, die schon auf der Uhr / in der Technogym-App angelegt sind
+route('POST', '/api/workout-library', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const code = String((body && body.code) || '').trim().toUpperCase();
+  if (!/^[A-Z]{1,2}(-[A-Z0-9]{1,3}){1,2}$/.test(code)) return sendError(res, 400, 'Ungültiger Code.');
+  const s = await loadStore();
+  s.workoutLibrary = s.workoutLibrary || {};
+  if (body.created === false) {
+    delete s.workoutLibrary[code];
+  } else {
+    s.workoutLibrary[code] = {
+      at: new Date().toISOString(),
+      title: String(body.title || '').slice(0, 60),
+      device: body.device === 'technogym' ? 'technogym' : 'watch'
+    };
+  }
+  await saveStore(s);
+  sendJson(res, 200, { library: s.workoutLibrary });
 });
 
 // Passt eine Plan-Einheit an die Erholung an (locker statt hart) oder macht das rückgängig

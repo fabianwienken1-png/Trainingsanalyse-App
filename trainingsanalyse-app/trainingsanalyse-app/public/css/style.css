@@ -491,3 +491,23 @@ select {
 .why { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); }
 .why ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.45; color: var(--text-2); }
 #spontan-minutes, #spontan-sport { margin: 0; padding: 0; flex-wrap: wrap; overflow: visible; }
+
+/* ---------- Einheiten-Codes ---------- */
+
+.code-box { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); }
+.code-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.code-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; font-size: 20px; letter-spacing: 0.5px;
+  color: var(--accent-ink); background: var(--accent); border-radius: 8px; padding: 4px 10px;
+}
+.code-badge.sm { font-size: 13px; padding: 3px 8px; flex-shrink: 0; }
+.code-status {
+  min-height: 36px; padding: 0 12px; border-radius: 18px; font-size: 14px; font-weight: 600;
+  background: transparent; color: var(--text); border: 1px solid var(--border);
+}
+.code-status.ok { color: var(--good); border-color: #1f4a2e; }
+.code-hint { margin-top: 10px; font-size: 13px; line-height: 1.45; color: var(--text-2); }
+.lib-list { display: flex; flex-direction: column; gap: 10px; }
+.lib-item { display: flex; align-items: center; gap: 12px; }
+.lib-item .txt { flex: 1; min-width: 0; }
+.lib-item .reset-btn { padding: 0; }

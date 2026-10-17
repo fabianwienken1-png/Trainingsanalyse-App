@@ -86,23 +86,27 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       };
     }
     if (intensity === 'moderate') {
-      const block = Math.max(6, Math.floor((D - 25) / 2));
+      const block = Math.min(20, Math.max(6, Math.floor((D - 25) / 2)));
+      const extra = D - 15 - (2 * block + 3) - 7;
       return {
         title: 'Tempodauerlauf',
         steps: [
           { label: '15 min', text: `einlaufen in ${zone(a, 2)}` },
           { label: `2 × ${block} min`, text: `zügig in ${zone(a, 3)}, dazwischen 3 min traben` },
-          { label: `${Math.max(5, D - 15 - 2 * block - 3)} min`, text: 'auslaufen' }
+          extra >= 5 ? { label: `${extra} min`, text: `ruhig weiter in ${zone(a, 2)}` } : null,
+          { label: `${extra >= 5 ? 7 : Math.max(5, extra + 7)} min`, text: 'auslaufen' }
         ]
       };
     }
     const reps = D >= 55 ? 5 : D >= 45 ? 4 : 3;
+    const extra = D - 15 - reps * 5 - 10;
     return {
       title: 'Intervalle',
       steps: [
         { label: '15 min', text: `einlaufen in ${zone(a, 2)}, dann 3 kurze Steigerungen` },
         { label: `${reps} × 3 min`, text: `schnell in ${zone(a, 4)}, dazwischen 2 min traben` },
-        { label: `${Math.max(5, D - 15 - reps * 5)} min`, text: 'auslaufen' }
+        extra >= 5 ? { label: `${extra} min`, text: `ruhig in ${zone(a, 2)}` } : null,
+        { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'auslaufen' }
       ]
     };
   }
@@ -120,22 +124,26 @@ function buildWorkout(sport, intensity, minutes, ctx) {
     }
     if (intensity === 'moderate') {
       const reps = D >= 75 ? 4 : D >= 55 ? 3 : 2;
+      const extra = D - 15 - reps * 12 - 10;
       return {
         title: 'Sweet Spot',
         steps: [
           { label: '15 min', text: `einrollen in ${zone(a, 2)}` },
           { label: `${reps} × 8 min`, text: `kräftig in ${zone(a, 3)} (oberer Bereich), dazwischen 4 min locker` },
-          { label: `${Math.max(5, D - 15 - reps * 12)} min`, text: 'ausrollen' }
+          extra >= 5 ? { label: `${extra} min`, text: `gleichmäßig in ${zone(a, 2)}` } : null,
+          { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'ausrollen' }
         ]
       };
     }
     const reps = D >= 60 ? 5 : 4;
+    const extra = D - 15 - reps * 6 - 10;
     return {
       title: 'VO2max-Intervalle',
       steps: [
         { label: '15 min', text: `einrollen in ${zone(a, 2)}, 2 × 30 s antreten` },
         { label: `${reps} × 3 min`, text: `hart in ${zone(a, 5)}, dazwischen 3 min sehr locker` },
-        { label: `${Math.max(5, D - 15 - reps * 6)} min`, text: 'ausrollen' }
+        extra >= 5 ? { label: `${extra} min`, text: `gleichmäßig in ${zone(a, 2)}` } : null,
+        { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'ausrollen' }
       ]
     };
   }
@@ -156,13 +164,15 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       };
     }
     if (intensity === 'moderate') {
-      const reps = Math.max(4, Math.floor((totalM - 600) / 100));
+      const reps = Math.min(15, Math.max(4, Math.floor((totalM - 600) / 100)));
+      const left = roundTo(totalM - 600 - reps * 100, 100);
       return {
         title: 'Ausdauer zügig',
         distance: totalM,
         steps: [
           { label: '400 m', text: 'einschwimmen, davon 100 m Technik' },
           { label: `${reps} × 100 m`, text: 'zügig, gleichmäßiges Tempo – 20 s Pause' },
+          left >= 200 && totalM - 600 - reps * 100 >= 150 ? { label: `${left} m`, text: 'locker, gleichmäßig' } : null,
           { label: '200 m', text: 'ausschwimmen' }
         ]
       };
@@ -198,6 +208,24 @@ function buildWorkout(sport, intensity, minutes, ctx) {
   };
 }
 
+const MAX_SWIM_MIN = 75;
+const MAX_STRENGTH_MIN = 60;
+
+// Fester Code je Einheit, unter dem sie auf der Uhr / in der Technogym-App
+// gespeichert wird: Sportart-Buchstabe, Typ, Dauer. Beispiele: L-IN-45, R-GA-90,
+// S-TE-60, K-A, ER-30. Gleicher Code = identischer Ablauf.
+const CODE_SPORT = { swim: 'S', bike: 'R', run: 'L', strength: 'K' };
+const CODE_TYPE = { easy: 'GA', moderate: 'TE', hard: 'IN' };
+
+function workoutCode(sport, intensity, minutes, workout) {
+  if (intensity === 'rest') return `ER-${Math.min(minutes, 30)}`;
+  if (sport === 'strength') {
+    const ab = workout.title.endsWith('A') ? 'A' : 'B';
+    return intensity === 'easy' ? `K-${ab}-L` : `K-${ab}`;
+  }
+  return `${CODE_SPORT[sport]}-${CODE_TYPE[intensity]}-${minutes}`;
+}
+
 // ---------------------------------------------------------------------------
 // Entscheidung
 // ---------------------------------------------------------------------------
@@ -207,6 +235,7 @@ function suggest(store, opts = {}) {
   const minutes = Math.min(180, Math.max(20, Number(opts.minutes) || 45));
   const wanted = SPORTS[opts.sport] ? opts.sport : null;
   const athlete = store.athlete || {};
+  const library = store.workoutLibrary || {};
   const acts = store.activities || [];
   const todayKey = recovery.dayKey(now);
   const yesterdayKey = recovery.dayKey(new Date(now.getTime() - DAY_MS));
@@ -319,9 +348,22 @@ function suggest(store, opts = {}) {
   const ctx = { athlete, swimPace: swimPace(acts), strengthCount: strengthTotal };
   const make = (g, why, forceIntensity, forceMinutes) => {
     const sportIntensity = forceIntensity || intensity;
-    const mins = forceMinutes || minutes;
+    let mins = forceMinutes || minutes;
+    const extraWhy = [];
+    if (g === 'swim' && mins > MAX_SWIM_MIN && sportIntensity !== 'rest') {
+      mins = MAX_SWIM_MIN;
+      extraWhy.push(`Schwimmen auf ${MAX_SWIM_MIN} min begrenzt – länger ist für eine einzelne Einheit nicht sinnvoll`);
+    }
+    if (g === 'strength' && mins > MAX_STRENGTH_MIN && sportIntensity !== 'rest') {
+      mins = MAX_STRENGTH_MIN;
+      extraWhy.push(`Krafttraining auf ${MAX_STRENGTH_MIN} min begrenzt`);
+    }
     const w = buildWorkout(g, sportIntensity, mins, ctx);
+    const code = workoutCode(g, sportIntensity, mins, w);
     return {
+      code,
+      device: g === 'strength' && sportIntensity !== 'rest' ? 'technogym' : 'watch',
+      created: !!(library[code]),
       sport: sportIntensity === 'rest' ? 'rest' : g,
       sportLabel: sportIntensity === 'rest' ? 'Aktive Erholung' : SPORTS[g].label,
       planType: SPORTS[g].planType,
@@ -331,7 +373,7 @@ function suggest(store, opts = {}) {
       title: w.title,
       distance: w.distance || null,
       steps: w.steps.filter(Boolean),
-      why
+      why: [...extraWhy, ...why]
     };
   };
 

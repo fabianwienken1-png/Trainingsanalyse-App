@@ -670,6 +670,7 @@ function renderSpontanResult(data) {
       ]),
       el('span', { class: `chip ${INTENSITY_CHIP[w.intensity] || 'solid-muted'}` }, w.intensityLabel)
     ]),
+    codeRow(w),
     el('ol', { class: 'steps' }, w.steps.map((st) => el('li', {}, [
       el('span', { class: 'step-label' }, st.label),
       el('span', { class: 'step-text' }, st.text)
@@ -688,7 +689,7 @@ function renderSpontanResult(data) {
       }, [
         spontanIcon(alt),
         el('div', { class: 'txt' }, [
-          el('div', { class: 't1' }, `${alt.sportLabel} · ${alt.intensityLabel} · ${alt.minutes} min`),
+          el('div', { class: 't1' }, `${alt.code}${alt.created ? ' ✓' : ''} · ${alt.sportLabel} · ${alt.intensityLabel} · ${alt.minutes} min`),
           el('div', { class: 't2', style: 'font-size:15px' }, alt.title)
         ]),
         chevron()
@@ -696,6 +697,61 @@ function renderSpontanResult(data) {
     }
   }
   mount('spontan-result', ...nodes);
+}
+
+const DEVICE_LABEL = { watch: 'Apple Watch', technogym: 'Technogym-App' };
+
+function codeRow(w) {
+  if (!w.code) return null;
+  const lib = (currentState && currentState.workoutLibrary) || {};
+  const created = !!lib[w.code];
+  const where = DEVICE_LABEL[w.device] || 'Uhr';
+  const hint = w.device === 'technogym'
+    ? `Einmalig in der Technogym-App unter „Ihre Workouts“ → + anlegen und „${w.code}“ nennen. Beim nächsten Mal nur noch nach dem Code suchen.`
+    : `Einmalig in der Fitness-App auf dem iPhone anlegen: Trainings → Sportart → Timer-Symbol → „Eigene“ → +, Name „${w.code}“. Danach findest du es direkt auf der Watch.`;
+  return el('div', { class: 'code-box' }, [
+    el('div', { class: 'code-row' }, [
+      el('span', { class: 'code-badge' }, w.code),
+      created
+        ? el('button', { class: 'code-status ok', type: 'button', title: 'Markierung entfernen', onclick: () => setLibrary(w, false) }, `✓ Auf ${where === 'Apple Watch' ? 'der Watch' : 'Technogym'} angelegt`)
+        : el('button', { class: 'code-status', type: 'button', onclick: () => setLibrary(w, true) }, 'Als angelegt markieren')
+    ]),
+    created ? null : el('div', { class: 'code-hint' }, hint)
+  ]);
+}
+
+async function setLibrary(w, created) {
+  try {
+    const res = await fetch('/api/workout-library', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: w.code, created, title: `${w.sportLabel} · ${w.title}`, device: w.device })
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'Unbekannter Fehler');
+    currentState.workoutLibrary = body.library;
+    if (document.getElementById('spontan-dialog').open) loadSpontan();
+    renderLibrary();
+  } catch (err) {
+    alert('Speichern fehlgeschlagen: ' + err.message);
+  }
+}
+
+function renderLibrary() {
+  const lib = (currentState && currentState.workoutLibrary) || {};
+  const codes = Object.keys(lib).sort();
+  if (!codes.length) {
+    mount('workout-library', el('p', { class: 'muted small', style: 'margin:0' }, 'Noch keine Einheiten gespeichert. Markiere bei „Spontan trainieren“ eine Einheit als angelegt, dann erscheint sie hier.'));
+    return;
+  }
+  mount('workout-library', el('div', { class: 'lib-list' }, codes.map((c) => el('div', { class: 'lib-item' }, [
+    el('span', { class: 'code-badge sm' }, c),
+    el('div', { class: 'txt' }, [
+      el('div', { class: 'small' }, lib[c].title || ''),
+      el('div', { class: 'small muted' }, DEVICE_LABEL[lib[c].device] || '')
+    ]),
+    el('button', { class: 'reset-btn', type: 'button', onclick: () => setLibrary({ code: c }, false) }, 'Entfernen')
+  ]))), el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Code-Schema: S = Schwimmen, R = Rad, L = Lauf, K = Kraft · GA = locker, TE = Tempo, IN = Intervalle · Zahl = Minuten. K-A/K-B = Krafteinheit A/B, „-L“ = leichte Variante.'));
 }
 
 const MOON_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>';
@@ -1139,6 +1195,7 @@ function openSettings() {
 }
 
 function renderSettings() {
+  renderLibrary();
   const a = currentState.athlete;
   const form = document.getElementById('settings-form');
   if (!form.contains(document.activeElement)) {
