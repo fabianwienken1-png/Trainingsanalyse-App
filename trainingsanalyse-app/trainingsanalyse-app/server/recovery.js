@@ -195,6 +195,34 @@ function latest(map, now, pick = (v) => v) {
   return null;
 }
 
+// HRV-Steuerung nach Plews/Kiviniemi: ln(HRV) – 7-Tage-Mittel im Vergleich zu
+// deiner persönlichen Normalspanne (60-Tage-Mittel ± 0,5 SD = "kleinste
+// bedeutsame Veränderung"). Einzelwerte schwanken stark, der Trend ist robust.
+function hrvStatus(hrvMap, now) {
+  const all60 = lastDays(hrvMap, 60, now).filter((v) => v > 0);
+  if (all60.length < 14) return null;
+  const ln = all60.map((v) => Math.log(v));
+  const mean = avg(ln);
+  const sd = Math.sqrt(avg(ln.map((x) => (x - mean) ** 2))) || 0.05;
+  const swc = 0.5 * sd;
+  const last7 = lastDays(hrvMap, 7, now).filter((v) => v > 0).map((v) => Math.log(v));
+  const today = latest(hrvMap, now);
+  const trend = last7.length >= 3 ? avg(last7) : null;
+  let state = 'normal';
+  if (trend !== null && trend < mean - swc) state = 'niedrig';
+  else if (trend !== null && trend > mean + swc) state = 'hoch';
+  const todayLow = today ? Math.log(today.value) < mean - sd : false;
+  return {
+    state,
+    todayLow,
+    baseline: Math.exp(mean),
+    low: Math.exp(mean - swc),
+    high: Math.exp(mean + swc),
+    trend7: trend === null ? null : Math.exp(trend),
+    days: all60.length
+  };
+}
+
 function computeRecovery(health, now = new Date()) {
   if (!health) return null;
   const sleepMap = health.sleep || {};
@@ -233,7 +261,12 @@ function computeRecovery(health, now = new Date()) {
     else if (sleepAvg7 >= 7.5) { score += 1; }
   }
   if (lastNight && lastNight.total < 6) { score -= 1; reasons.push(`letzte Nacht nur ${fmtH(lastNight.total)}`); }
-  if (hrvLatest && hrvBaseline && hrv28.length >= 7) {
+  const hs = hrvStatus(hrvMap, now);
+  if (hs) {
+    if (hs.state === 'niedrig') { score -= 1; reasons.push('HRV-Trend der letzten 7 Tage unter deiner Normalspanne'); }
+    if (hs.todayLow) { score -= 1; reasons.push('HRV heute deutlich unter deinem Normalwert'); }
+    if (hs.state !== 'niedrig' && !hs.todayLow && hrvLatest && hrvLatest.value >= hs.baseline) score += 1;
+  } else if (hrvLatest && hrvBaseline && hrv28.length >= 7) {
     if (hrvLatest.value < hrvBaseline * 0.85) { score -= 1; reasons.push('Herzfrequenzvariabilität deutlich unter deinem Schnitt'); }
     else if (hrvLatest.value > hrvBaseline * 1.05) { score += 1; }
   }
@@ -254,7 +287,14 @@ function computeRecovery(health, now = new Date()) {
     sleepAvg7: sleepAvg7 === null ? null : round(sleepAvg7),
     sleepAvg28: sleepAvg28 === null ? null : round(sleepAvg28),
     sleepNights7: sleep7.length,
-    hrv: hrvLatest ? { latest: hrvLatest.value, baseline: hrvBaseline === null ? null : round(hrvBaseline, 1) } : null,
+    hrv: hrvLatest ? {
+      latest: hrvLatest.value,
+      baseline: hs ? round(hs.baseline, 1) : hrvBaseline === null ? null : round(hrvBaseline, 1),
+      range: hs ? [Math.round(hs.low), Math.round(hs.high)] : null,
+      trend7: hs && hs.trend7 ? round(hs.trend7, 1) : null,
+      state: hs ? hs.state : null,
+      todayLow: hs ? hs.todayLow : false
+    } : null,
     restingHR: rhrLatest ? { latest: rhrLatest.value, baseline: rhrBaseline === null ? null : round(rhrBaseline, 1) } : null
   };
 }

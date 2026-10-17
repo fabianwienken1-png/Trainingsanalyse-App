@@ -297,6 +297,15 @@ const FORM_STATES = {
   unbekannt: { chip: 'solid-muted', label: 'Noch offen', text: 'Noch zu wenig Trainingshistorie für eine verlässliche Einschätzung.' }
 };
 
+const FORM_STATES_TSB = {
+  'überlastet': { chip: 'solid-danger', label: 'Überlastet', text: 'Die Ermüdung liegt weit über deiner Fitness. Ein paar lockere Tage oder Ruhe einplanen.' },
+  produktiv: { chip: 'solid-good', label: 'Im Aufbau', text: 'Du trainierst etwas über deiner Fitness – genau so entsteht Fortschritt.' },
+  neutral: { chip: 'solid-muted', label: 'Ausgeglichen', text: 'Fitness und Ermüdung halten sich die Waage. Erhaltend – für Fortschritt etwas mehr Reiz.' },
+  frisch: { chip: 'solid-good', label: 'Frisch', text: 'Du bist ausgeruht – ideal für einen Wettkampf oder eine harte Einheit.' },
+  erholt: { chip: 'solid-warning', label: 'Sehr frisch', text: 'Kaum Ermüdung. Gut vor dem Wettkampf – länger so verliert die Fitness an Substanz.' },
+  unbekannt: { chip: 'solid-muted', label: 'Noch offen', text: 'Noch zu wenig Trainingshistorie für eine verlässliche Einschätzung (mind. 3 Wochen).' }
+};
+
 function formStateFor(riskLevel) {
   const key = Object.keys(FORM_STATES).find((k) => (riskLevel || '').startsWith(k));
   return FORM_STATES[key || 'unbekannt'];
@@ -316,29 +325,35 @@ function renderToday() {
   document.getElementById('today-label').textContent = now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
   const a = currentState.analysis;
 
-  // Formstatus
-  const fs = formStateFor(a.acwr.riskLevel);
+  // Formstatus: Fitness / Ermüdung / Form (ACWR nur noch als Zusatzinfo)
+  const fit = a.fitness;
+  const fst = FORM_STATES_TSB[fit ? fit.state : 'unbekannt'] || FORM_STATES_TSB.unbekannt;
+  const fp = fit ? fit.formPct : null;
+  const known = fit && fit.state !== 'unbekannt';
+  const markerPos = known ? Math.max(0, Math.min(100, ((fp + 50) / 90) * 100)) : null;
   const acwr = a.acwr.acwr;
-  const markerPos = acwr === null ? null : Math.min(100, (acwr / 2) * 100);
   mount('form-card', el('div', { class: 'card form-status' }, [
     el('div', { class: 'card-head', style: 'margin:0' }, [
       el('div', { class: 'head-with-info' }, [el('h2', {}, 'Formstatus'), infoButton('acwr', 'Formstatus')]),
-      el('span', { class: `chip ${fs.chip}` }, fs.label)
+      el('span', { class: `chip ${fst.chip}` }, fst.label)
     ]),
     el('div', { class: 'big-row' }, [
-      el('div', { class: 'big' }, acwr === null ? '–' : fmtNum(acwr, 2)),
-      el('div', { class: 'explain' }, fs.text)
+      el('div', { class: 'big' }, known ? `${fp > 0 ? '+' : fp < 0 ? '−' : ''}${Math.abs(fp)}` : '–'),
+      el('div', { class: 'explain' }, fst.text)
     ]),
     el('div', {}, [
-      el('div', { class: 'zone-scale', role: 'img', 'aria-label': acwr === null ? 'Belastungsverhältnis unbekannt' : `Belastungsverhältnis ${fmtNum(acwr, 2)}, optimal ist 0,8 bis 1,3` }, [
-        el('span', { style: 'width:40%;background:#5cc8f2' }),
-        el('span', { style: 'width:25%;background:#4ed17a' }),
-        el('span', { style: 'width:10%;background:#f5b544' }),
-        el('span', { style: 'width:25%;background:#f2685c' }),
+      el('div', { class: 'zone-scale', role: 'img', 'aria-label': known ? `Form ${fp} Prozent` : 'Form unbekannt' }, [
+        el('span', { style: 'width:22%;background:#f2685c' }),
+        el('span', { style: 'width:22%;background:#4ed17a' }),
+        el('span', { style: 'width:17%;background:#6b6f78' }),
+        el('span', { style: 'width:22%;background:#5cc8f2' }),
+        el('span', { style: 'width:17%;background:#f5b544' }),
         markerPos === null ? null : el('div', { class: 'marker', style: `left:${markerPos}%` })
       ]),
-      el('div', { class: 'zone-labels' }, [el('span', {}, 'niedrig'), el('span', {}, 'optimal 0,8–1,3'), el('span', {}, 'hoch')])
-    ])
+      el('div', { class: 'zone-labels' }, [el('span', {}, 'überlastet'), el('span', {}, 'Aufbau'), el('span', {}, 'frisch')])
+    ]),
+    fit ? el('div', { class: 'muted small', style: 'margin-top:10px' },
+      `Fitness ${fit.ctl} · Ermüdung ${fit.atl}${acwr !== null ? ` · ACWR ${fmtNum(acwr, 2)}` : ''}${!fit.reliable ? ' · noch im Aufbau (unter 6 Wochen Daten)' : ''}`) : null
   ]));
 
   renderRecovery();
@@ -455,17 +470,20 @@ function infoContent(key) {
   const acute = Math.round(a.acwr.acute7);
   const chronic = Math.round(a.acwr.chronicWeekly || 0);
   switch (key) {
-    case 'acwr':
+    case 'acwr': {
+      const f = a.fitness;
       return {
-        title: 'Formstatus (ACWR)',
+        title: 'Formstatus',
         paras: [
-          'Das Belastungsverhältnis (Acute:Chronic Workload Ratio) vergleicht deine Trainingslast der letzten 7 Tage mit deinem Wochenschnitt der letzten 4 Wochen.',
-          'Unter 0,8: du trainierst weniger als gewohnt, die Form kann nachlassen. 0,8–1,3: optimaler Bereich. 1,3–1,5: du steigerst schnell, achte auf Erholung. Über 1,5: deutlich erhöhtes Verletzungsrisiko.'
+          'Fitness ist deine Trainingslast der letzten ~6 Wochen (gleitender Schnitt, neuere Tage zählen mehr). Ermüdung ist dasselbe für die letzten ~7 Tage. Form = Fitness − Ermüdung, angegeben in % der Fitness.',
+          'Unter −30: überlastet, Verletzungs- und Infektrisiko steigen. −30 bis −10: produktiver Aufbau. −10 bis +5: ausgeglichen. +5 bis +25: frisch – ideal für Wettkämpfe. Darüber: sehr frisch, auf Dauer geht Fitness verloren.',
+          'Der Plan nutzt diesen Wert: unter −20 % wird der Umfang gehalten, unter −30 % reduziert. Das frühere Belastungsverhältnis (ACWR) steht nur noch als Zusatzinfo dabei – es gilt inzwischen als wenig aussagekräftig für Verletzungen.'
         ],
-        current: acwr === null
-          ? 'Für eine verlässliche Einschätzung fehlt noch Trainingshistorie (mindestens 14 Tage).'
-          : `Aktuell ${fmtNum(acwr, 2)}: ${acute} Punkte in den letzten 7 Tagen gegenüber durchschnittlich ${chronic} Punkten pro Woche in den letzten 4 Wochen.`
+        current: !f || f.state === 'unbekannt'
+          ? 'Für eine verlässliche Einschätzung fehlt noch Trainingshistorie.'
+          : `Aktuell: Fitness ${f.ctl}, Ermüdung ${f.atl}, Form ${f.formPct > 0 ? '+' : ''}${f.formPct} %.${acwr !== null ? ` ACWR ${fmtNum(acwr, 2)} (${acute} Punkte in 7 Tagen vs. Ø ${chronic} pro Woche).` : ''}`
       };
+    }
     case 'wochenlast':
       return {
         title: 'Wochenlast',
@@ -503,7 +521,8 @@ function infoContent(key) {
         title: 'So entsteht dein Plan',
         paras: [
           'Phasen: Ohne Wettkampf trainierst du in der Grundlage. Mit Wettkampf-Datum durchläuft der Plan Grundlage (mehr als 16 Wochen vorher) → Aufbau → Wettkampfvorbereitung (letzte 8 Wochen, beim Triathlon mit Koppeltraining) → Tapering (10 km: 1 Woche, Triathlon & Halbmarathon: 2 Wochen, Marathon: 3 Wochen) → Wettkampfwoche. Jede 4. Woche ist eine Entlastungswoche.',
-          'Umfang: steigt um max. 10 % pro Woche – aber nur, wenn du die Vorwoche zu mindestens 70 % geschafft hast, die Belastung (ACWR) nicht erhöht und deine Erholung nicht eingeschränkt ist. Obergrenze sind deine verfügbaren Stunden.',
+          'Umfang: steigt um max. 10 % pro Woche (Sicherheitsgrenze) – aber nur, wenn du die Vorwoche zu mindestens 70 % geschafft hast, deine Form nicht im Überlastungsbereich liegt, die Erholung (Schlaf, HRV, Ruhepuls) nicht eingeschränkt ist und sich das Training nicht zu schwer anfühlt. Obergrenze sind deine verfügbaren Stunden. Die Entlastungswoche wird vorgezogen, wenn HRV-Trend und Gefühl Ermüdung zeigen.',
+          'Intensität: Pulszonen hängen an deinem Schwellenpuls, Tempo an deiner Bestzeit, Watt an der FTP. Fordernde Einheiten sind meist unterschwellige Intervalle (knapp unter der Schwelle, kurze Pausen), im Aufbau zusätzlich harte Intervalle. Kraft: schwer mit 4–6 Wdh. plus Sprünge. Lange Einheiten mit Verpflegungshinweis.',
           'Verteilung: Triathlon-Mix nach Distanz bzw. bei Laufzielen 3–5 Läufe plus lockeres Rad/Schwimmen als Ausgleich, lange Einheiten am Wochenende, nur 1–2 fordernde Einheiten pro Woche (80/20-Prinzip), Kraft fest eingeplant. Jeden Montag wird die Vorwoche ausgewertet und automatisch neu geplant.'
         ],
         current: d.reason || null
@@ -538,7 +557,8 @@ function infoContent(key) {
         title: 'Erholung',
         paras: [
           'Schlaf ist der wichtigste Erholungsfaktor: Im Tiefschlaf repariert der Körper Muskeln und baut Trainingsreize in Leistung um. Ausdauersportler brauchen meist 7–9 Stunden.',
-          'Die Einschätzung kombiniert deinen Schlaf der letzten 7 Nächte, die letzte Nacht und – falls vorhanden – Herzfrequenzvariabilität (HRV) und Ruhepuls im Vergleich zu deinem eigenen 4-Wochen-Schnitt. Eine niedrige HRV oder ein erhöhter Ruhepuls deuten auf Ermüdung, Stress oder einen beginnenden Infekt hin.',
+          'Die Einschätzung kombiniert deinen Schlaf der letzten 7 Nächte, die letzte Nacht, den Ruhepuls und deine Herzfrequenzvariabilität (HRV). Ein erhöhter Ruhepuls oder eine niedrige HRV deuten auf Ermüdung, Stress oder einen beginnenden Infekt hin.',
+          'HRV-Steuerung: Aus den letzten 60 Tagen wird deine persönliche Normalspanne berechnet (Mittelwert ± kleinste bedeutsame Veränderung). Entscheidend ist der 7-Tage-Trend: liegt er darunter, zählt das als Ermüdungssignal. Ein einzelner Tag deutlich darunter entschärft eine harte Einheit. Liegt der Trend unter der Spanne und das Training fühlt sich schwer an, zieht der Plan die Entlastungswoche vor.',
           'Bei eingeschränkter Erholung reduziert der Wochenplan die Belastung automatisch leicht.',
           'Nächte ohne Aufzeichnung (z.B. Uhr nicht getragen) werden einfach ausgelassen: Sie zählen nicht als 0 Stunden, die Durchschnitte werden nur aus den aufgezeichneten Nächten gebildet.'
         ],
@@ -605,7 +625,7 @@ function renderRecovery() {
   const phases = ln ? [ln.deep ? `Tief ${fmtHours(ln.deep)}` : null, ln.rem ? `REM ${fmtHours(ln.rem)}` : null].filter(Boolean).join(' · ') : '';
   const metrics = [
     recoveryMetric('Ø 7 Nächte', rec.sleepAvg7 !== null ? `${fmtHours(rec.sleepAvg7)} h` : '–', rec.sleepAvg28 !== null ? `4 Wo.: ${fmtHours(rec.sleepAvg28)} h` : null),
-    rec.hrv ? recoveryMetric('HRV', `${Math.round(rec.hrv.latest)} ms`, rec.hrv.baseline ? `Ø ${Math.round(rec.hrv.baseline)} ms` : null) : null,
+    rec.hrv ? recoveryMetric('HRV', `${Math.round(rec.hrv.latest)} ms`, rec.hrv.range ? `normal ${rec.hrv.range[0]}–${rec.hrv.range[1]}` : rec.hrv.baseline ? `Ø ${Math.round(rec.hrv.baseline)} ms` : null) : null,
     rec.restingHR ? recoveryMetric('Ruhepuls', `${Math.round(rec.restingHR.latest)}`, rec.restingHR.baseline ? `Ø ${Math.round(rec.restingHR.baseline)}` : null) : null
   ].filter(Boolean);
   mount('recovery-card', el('div', { class: 'card recovery' }, [
@@ -1036,7 +1056,7 @@ function renderPlan() {
     }
 
     const w = s.workout;
-    const kindTag = { long: 'lang', quality: INTENSITY_LABELS[s.intensity], brick: 'Koppel', strength: null, easy: null, mobility: null }[s.kind];
+    const kindTag = { long: 'lang', quality: INTENSITY_LABELS[s.intensity], brick: 'Koppel', strength: null, easy: null, mobility: 'optional' }[s.kind];
     sessionsBox.appendChild(el('div', { class: `session-row${isToday ? ' today' : ''}` }, [
       el('div', { class: 'session-day' }, [el('span', { class: 'wd' }, s.weekday), el('span', { class: 'dn' }, String(dd))]),
       el('div', { class: `session-card ${s.status}` }, [
@@ -1073,11 +1093,11 @@ function openSessionDetail(id) {
   const g = groupOf(s.sport);
   const why = [];
   if (s.kind === 'long') why.push('Lange, lockere Einheit – baut deine Grundlagenausdauer für den Wettkampf auf');
-  if (s.kind === 'quality') why.push(s.intensity === 'hard' ? 'Intensiver Reiz für VO2max und Tempohärte – die Pausen locker halten' : 'Tempo-Reiz an der Schwelle – fordernd, aber kontrolliert');
+  if (s.kind === 'quality') why.push(s.intensity === 'hard' ? 'Intensiver Reiz für VO2max und Tempohärte – die Pausen locker halten' : 'Unterschwellig: viel Zeit knapp unter der Schwelle bei wenig Ermüdung – hebt die Schwelle an, ohne die nächsten Tage zu kosten');
   if (s.kind === 'brick') why.push('Koppeltraining: gewöhnt die Beine an den Wechsel vom Rad zum Laufen');
   if (s.kind === 'easy') why.push('Lockere Einheit – fördert die Erholung und den Fettstoffwechsel');
-  if (s.kind === 'strength') why.push('Kraft beugt Verletzungen vor und verbessert die Laufökonomie');
-  if (s.kind === 'mobility') why.push('Dehnen und Mobilität halten Hüfte, Waden und Rücken beweglich – gerade nach langen oder harten Einheiten. Auf der Watch als „Flexibilität“ starten, dann wird es automatisch erkannt.');
+  if (s.kind === 'strength') why.push('Schweres Krafttraining (4–6 Wdh.) und Sprünge verbessern die Laufökonomie und machen Sehnen belastbarer – ohne nennenswert Masse aufzubauen');
+  if (s.kind === 'mobility') why.push('Optional: Dehnen beugt Verletzungen nach heutigem Wissen kaum vor, kann sich aber gut anfühlen und die Beweglichkeit erhalten. Zählt nicht zur Erfüllung des Wochenplans. Auf der Watch als „Flexibilität“ starten, dann wird es automatisch erkannt.');
   if (s.adjusted && s.adjustReason) why.push(s.adjustReason);
   const w = {
     sport: g.key, sportLabel: `${s.weekday}, ${new Date(s.day + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })} · ${sportLabel(s.sport)}`,
@@ -1567,7 +1587,16 @@ function renderPerfForm() {
     document.getElementById('perf-run-distance').value = p.runTest ? p.runTest.distance : '';
     document.getElementById('perf-run-time').value = p.runTest ? fmtClock(p.runTest.timeSec) : '';
     document.getElementById('perf-ftp').value = p.ftp || '';
+    document.getElementById('perf-lthr').value = p.lthr && p.lthr.source === 'manual' ? p.lthr.value : '';
   }
+  const l = p.lthr;
+  mount('perf-lthr-hint', !l
+    ? 'Wird geschätzt, sobald dein Maximalpuls bekannt ist.'
+    : el('div', {}, [
+      el('div', {}, l.source === 'manual' ? `Von dir eingetragen: ${l.value} bpm.` : `Automatisch: ${l.value} bpm (${l.basis}). Leeres Feld = automatisch.`),
+      el('div', { style: 'margin-top:4px' }, `Alle Pulszonen hängen daran: Grundlage ${Math.round(l.value * 0.85)}–${Math.round(l.value * 0.89)} · Tempo ${Math.round(l.value * 0.9)}–${Math.round(l.value * 0.94)} · Schwelle ${Math.round(l.value * 0.95)}–${Math.round(l.value * 0.99)} bpm (Rad etwas niedriger).`),
+      el('div', { style: 'margin-top:4px' }, 'Genau bestimmen: 30 min allein so schnell wie gleichmäßig möglich laufen – der Ø-Puls der letzten 20 min ist dein Schwellenpuls.')
+    ]));
   const r = p.run;
   mount('perf-run-hint', r
     ? el('div', {}, [
@@ -1599,7 +1628,8 @@ function setupPerfForm() {
     if (distance && !time) { alert('Bitte die Zeit eintragen, z.B. 48:30.'); return; }
     const payload = {
       runTest: distance && time ? { distance, time } : null,
-      ftp: document.getElementById('perf-ftp').value || null
+      ftp: document.getElementById('perf-ftp').value || null,
+      lthr: document.getElementById('perf-lthr').value || null
     };
     try {
       const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });

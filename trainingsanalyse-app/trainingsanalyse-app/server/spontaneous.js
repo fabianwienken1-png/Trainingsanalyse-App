@@ -34,13 +34,32 @@ function minIntensity(a, b) {
   return INTENSITY_ORDER.indexOf(a) <= INTENSITY_ORDER.indexOf(b) ? a : b;
 }
 
-// Pulsbereich nach Karvonen (Herzfrequenzreserve), falls Max- und Ruhepuls bekannt
-function zone(athlete, n) {
-  const bounds = { 1: [0.5, 0.6], 2: [0.6, 0.7], 3: [0.7, 0.8], 4: [0.8, 0.9], 5: [0.9, 1.0] }[n];
-  if (!athlete.maxHR || !athlete.restingHR) return `Zone ${n}`;
+// Pulszonen an der Schwelle verankert (Schwellenpuls/LTHR, Zonen nach Friel).
+// Rad liegt bei gleicher Anstrengung etwas niedriger als Laufen; Schwimmen nutzt
+// die Rad-Zonen (Puls im Wasser ist ohnehin niedriger).
+const LTHR_ZONES = {
+  run: { 1: [0.75, 0.85], 2: [0.85, 0.89], 3: [0.9, 0.94], 4: [0.95, 0.99], 5: [1.0, 1.06] },
+  bike: { 1: [0.7, 0.81], 2: [0.81, 0.89], 3: [0.9, 0.93], 4: [0.94, 0.99], 5: [1.0, 1.06] }
+};
+// Fallback ohne Schwellenpuls: Karvonen (Herzfrequenzreserve)
+const HRR_ZONES = { 1: [0.5, 0.6], 2: [0.6, 0.7], 3: [0.7, 0.8], 4: [0.8, 0.9], 5: [0.9, 1.0] };
+
+function hrAt(athlete, n, pos) {
+  if (athlete._lthr) {
+    const table = LTHR_ZONES[athlete._sport === 'run' ? 'run' : 'bike'];
+    const b = table[n];
+    return Math.round(athlete._lthr * (b[0] + (b[1] - b[0]) * pos));
+  }
+  if (!athlete.maxHR || !athlete.restingHR) return null;
+  const b = HRR_ZONES[n];
   const hrr = athlete.maxHR - athlete.restingHR;
-  const lo = Math.round(athlete.restingHR + hrr * bounds[0]);
-  const hi = Math.round(athlete.restingHR + hrr * bounds[1]);
+  return Math.round(athlete.restingHR + hrr * (b[0] + (b[1] - b[0]) * pos));
+}
+
+function zone(athlete, n) {
+  const lo = hrAt(athlete, n, 0);
+  const hi = hrAt(athlete, n, 1);
+  if (lo === null) return `Zone ${n}`;
   return `Zone ${n} (${lo}–${hi} bpm)`;
 }
 
@@ -62,10 +81,7 @@ function swimPace(activities) {
 
 // Zielpuls als einzelne Zahl innerhalb einer Zone (pos 0 = Untergrenze, 1 = Obergrenze)
 function bpm(athlete, n, pos = 0.5) {
-  const bounds = { 1: [0.5, 0.6], 2: [0.6, 0.7], 3: [0.7, 0.8], 4: [0.8, 0.9], 5: [0.9, 1.0] }[n];
-  if (!athlete.maxHR || !athlete.restingHR) return null;
-  const hrr = athlete.maxHR - athlete.restingHR;
-  return Math.round(athlete.restingHR + hrr * (bounds[0] + (bounds[1] - bounds[0]) * pos));
+  return hrAt(athlete, n, pos);
 }
 
 // Schritt mit Zielpuls: z = Zone, pos = Lage in der Zone
@@ -76,14 +92,16 @@ function step(a, label, text, z, pos) {
 // Ablauf mit Zielpuls, beim Laufen zusätzlich Tempo (min/km + km/h fürs
 // Laufband), beim Rad Watt – sofern Bestzeit bzw. FTP bekannt sind.
 function buildWorkout(sport, intensity, minutes, ctx) {
-  const w = buildWorkoutBase(sport, intensity, minutes, ctx);
   const t = ctx.targets || {};
+  const athlete = Object.assign({}, ctx.athlete, { _sport: sport, _lthr: t.lthr || null });
+  const w = buildWorkoutBase(sport, intensity, minutes, Object.assign({}, ctx, { athlete }));
   if (intensity !== 'rest' && (sport === 'run' || sport === 'bike')) {
     w.steps = w.steps.map((st) => {
       if (!st || !st.zone) return st;
       const pos = typeof st.pos === 'number' ? st.pos : 0.5;
       if (sport === 'run' && t.tenKSec) {
-        const p = performance.paceForZone(t.tenKSec, st.zone, pos);
+        const pz = st.paceZone || [st.zone, pos];
+        const p = performance.paceForZone(t.tenKSec, pz[0], pz[1]);
         return Object.assign({}, st, { pace: p.text, speed: p.kmh });
       }
       if (sport === 'bike' && t.ftp) {
@@ -92,6 +110,16 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       return st;
     });
   }
+  // Verpflegung bei langen Einheiten (aktuelle Empfehlung: Kohlenhydrate schon
+  // im Training, damit der Darm sie im Wettkampf verträgt)
+  if (intensity !== 'rest' && (sport === 'run' || sport === 'bike') && minutes >= 60) {
+    const text = minutes < 75
+      ? 'Wasser mitnehmen. Für diese Dauer reicht meist ein gutes Frühstück/Snack vorher, Kohlenhydrate unterwegs sind optional.'
+      : sport === 'bike'
+        ? '60–90 g Kohlenhydrate pro Stunde ab ca. 30 min (z.B. Gel ≈ 25 g, Riegel ≈ 40 g, 500 ml Sportgetränk ≈ 30 g) und 500–750 ml pro Stunde trinken. Mit 60 g starten und steigern – der Darm ist trainierbar.'
+        : '30–60 g Kohlenhydrate pro Stunde ab ca. 40 min (z.B. 1 Gel alle 25–30 min) und schluckweise trinken. Für Halbmarathon/Marathon im Training an die Wettkampf-Verpflegung gewöhnen.';
+    w.steps = [...w.steps, { label: 'Verpflegung', text, hr: null, zone: null }];
+  }
   return w;
 }
 
@@ -99,7 +127,7 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
   const a = ctx.athlete;
   const D = minutes;
   // Standard-Zielpulse
-  const WARM = [2, 0.3];      // einlaufen / einrollen
+  const WARM = [1, 0.85];     // einlaufen / einrollen (obere Zone 1)
   const BASE = [2, 0.5];      // Grundlage
   const REST = [1, 0.6];      // Pausen zwischen Intervallen
   const COOL = [1, 0.25];     // ausrollen / auslaufen
@@ -120,7 +148,7 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
       return {
         title: 'Lockerer Dauerlauf',
         steps: [
-          step(a, '5 min', `einlaufen, sehr locker – ${zone(a, 2)}`, ...WARM),
+          step(a, '5 min', `einlaufen, sehr locker – ${zone(a, 1)}`, ...WARM),
           step(a, `${main} min`, `gleichmäßig in ${zone(a, 2)} – Unterhaltung muss möglich sein`, ...BASE),
           D >= 40 ? step(a, '4 × 20 s', 'Steigerungsläufe, locker schnell – zu kurz für einen Zielpuls, nach Gefühl') : null,
           D >= 40 ? step(a, 'je 1 min', `dazwischen gehen/traben – ${zone(a, 1)}`, ...REST) : null,
@@ -129,16 +157,20 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
       };
     }
     if (intensity === 'moderate') {
-      const block = Math.min(20, Math.max(6, Math.floor((D - 25) / 2)));
-      const extra = D - 15 - (2 * block + 3) - 7;
+      // Unterschwellige Intervalle ("norwegisches Modell"): knapp unter der
+      // Schwelle, kurze Trabpausen – viel Zeit im wirksamen Bereich bei wenig
+      // Ermüdung, gut für Amateure geeignet.
+      const len = D >= 60 ? 8 : 6;
+      const reps = Math.max(3, Math.min(6, Math.floor((D - 22) / (len + 1))));
+      const extra = D - 12 - reps * (len + 1) - 10;
       return {
-        title: 'Tempodauerlauf',
+        title: 'Unterschwellige Intervalle',
         steps: [
-          step(a, '15 min', `einlaufen – ${zone(a, 2)}`, ...WARM),
-          step(a, `2 × ${block} min`, `zügig – ${zone(a, 3)}`, 3, 0.6),
-          step(a, '3 min', `Pause dazwischen: traben – ${zone(a, 1)}`, ...REST),
-          extra >= 5 ? step(a, `${extra} min`, `ruhig weiter – ${zone(a, 2)}`, ...BASE) : null,
-          step(a, `${extra >= 5 ? 7 : Math.max(5, extra + 7)} min`, `locker auslaufen – ${zone(a, 1)}`, ...COOL)
+          step(a, '12 min', `einlaufen – ${zone(a, 1)}, am Ende 3 kurze Steigerungen`, ...WARM),
+          step(a, `${reps} × ${len} min`, `knapp unter der Schwelle – ${zone(a, 4)}, untere Hälfte. Kontrolliert: du könntest am Ende noch 1–2 Wiederholungen mehr`, 4, 0.15),
+          step(a, 'je 1 min', `Pause dazwischen: locker traben – ${zone(a, 1)}`, ...REST),
+          extra >= 5 ? step(a, `${extra} min`, `ruhig – ${zone(a, 2)}`, ...BASE) : null,
+          step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker auslaufen – ${zone(a, 1)}`, ...COOL)
         ]
       };
     }
@@ -147,8 +179,9 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
     return {
       title: 'Intervalle',
       steps: [
-        step(a, '15 min', `einlaufen – ${zone(a, 2)}, am Ende 3 kurze Steigerungen`, ...WARM),
-        step(a, `${reps} × 3 min`, `schnell – ${zone(a, 4)}`, 4, 0.5),
+        step(a, '15 min', `einlaufen – ${zone(a, 1)}, am Ende 3 kurze Steigerungen`, ...WARM),
+        // Puls hinkt bei 3-min-Intervallen hinterher → Puls Z4, Tempo aber ~3–5-km-Renntempo
+        Object.assign(step(a, `${reps} × 3 min`, `schnell – ${zone(a, 4)}, der Puls steigt erst gegen Ende jeder Wiederholung – nach Tempo laufen`, 4, 0.5), { paceZone: [5, 0.4] }),
         step(a, 'je 2 min', `Pause dazwischen: traben – ${zone(a, 1)}`, ...REST),
         extra >= 5 ? step(a, `${extra} min`, `ruhig – ${zone(a, 2)}`, ...BASE) : null,
         step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker auslaufen – ${zone(a, 1)}`, ...COOL)
@@ -161,7 +194,7 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
       return {
         title: 'Grundlagenausdauer Rad',
         steps: [
-          step(a, '10 min', `locker einrollen – ${zone(a, 2)}`, ...WARM),
+          step(a, '10 min', `locker einrollen – ${zone(a, 1)}`, ...WARM),
           step(a, `${Math.max(10, D - 15)} min`, `gleichmäßig – ${zone(a, 2)}, Trittfrequenz 85–95`, ...BASE),
           step(a, '5 min', `locker ausrollen – ${zone(a, 1)}`, ...COOL)
         ]
@@ -171,10 +204,10 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
       const reps = D >= 75 ? 4 : D >= 55 ? 3 : 2;
       const extra = D - 15 - reps * 12 - 10;
       return {
-        title: 'Sweet Spot',
+        title: 'Sweet Spot (unterschwellig)',
         steps: [
-          step(a, '15 min', `einrollen – ${zone(a, 2)}`, ...WARM),
-          step(a, `${reps} × 8 min`, `kräftig – ${zone(a, 3)}, oberer Bereich`, 3, 0.75),
+          step(a, '15 min', `einrollen – ${zone(a, 1)}`, ...WARM),
+          step(a, `${reps} × 8 min`, `kräftig, knapp unter der Schwelle – ${zone(a, 3)}, oberer Bereich`, 3, 0.75),
           step(a, 'je 4 min', `Pause dazwischen: locker treten – ${zone(a, 1)}`, ...REST),
           extra >= 5 ? step(a, `${extra} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE) : null,
           step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker ausrollen – ${zone(a, 1)}`, ...COOL)
@@ -186,7 +219,7 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
     return {
       title: 'VO2max-Intervalle',
       steps: [
-        step(a, '15 min', `einrollen – ${zone(a, 2)}, am Ende 2 × 30 s antreten`, ...WARM),
+        step(a, '15 min', `einrollen – ${zone(a, 1)}, am Ende 2 × 30 s antreten`, ...WARM),
         step(a, `${reps} × 3 min`, `hart – ${zone(a, 5)}`, 5, 0.3),
         step(a, 'je 3 min', `Pause dazwischen: sehr locker treten – ${zone(a, 1)}`, ...REST),
         extra >= 5 ? step(a, `${extra} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE) : null,
@@ -253,25 +286,35 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
       long ? ['60 s', 'Kindhaltung, ruhig in den Bauch atmen'] : null
     ].filter(Boolean);
     return {
-      title: long ? 'Dehnen & Mobilität' : 'Kurz dehnen',
+      title: long ? 'Dehnen & Mobilität (optional)' : 'Kurz dehnen (optional)',
       steps: items.map(([label, text]) => ({ label, text, hr: null, zone: null }))
     };
   }
 
   // Krafttraining an den Technogym-Geräten (Einheiten A/B im Wechsel)
+  // Schweres Krafttraining (4–6 Wdh.) + Sprünge verbessert bei Ausdauersportlern
+  // Laufökonomie und Sehnensteifigkeit, ohne nennenswert Masse aufzubauen.
+  // Leichte Variante (Entlastung/Tapering): weniger Sätze, mittlere Last.
   const useA = ctx.strengthCount % 2 === 0;
-  const sets = intensity === 'easy' ? '2' : '3';
-  const reps = intensity === 'easy' ? '12–15' : '8–10';
-  const exercises = useA
-    ? ['Beinpresse', 'Beinbeuger (Leg Curl)', 'Abduktoren', 'Latzug', 'Rückenstrecker', 'Bauchmaschine']
-    : ['Beinstrecker', 'Beinpresse einbeinig', 'Wadenheben', 'Rudern (Low Row)', 'Schulterpresse', 'Rumpfrotation'];
-  const count = D >= 45 ? 6 : D >= 35 ? 5 : 4;
+  const light = intensity === 'easy';
+  const heavy = light ? '2 × 8' : '3–4 × 4–6';
+  const heavyText = light ? 'mittleres Gewicht, 2–3 Wdh. Reserve' : 'schwer: die letzte Wdh. ist fordernd, aber sauber – 2–3 min Pause';
+  const main = useA
+    ? ['Beinpresse', 'Beinbeuger (Leg Curl)', 'Latzug']
+    : ['Beinpresse einbeinig', 'Wadenheben (Beinpresse)', 'Rudern (Low Row)'];
+  const accessory = useA ? ['Rückenstrecker', 'Bauchmaschine'] : ['Abduktoren', 'Rumpfrotation'];
+  const jumps = useA
+    ? { label: light ? '2 × 10' : '3 × 10', text: 'Pogo-Hops: kurze, federnde Sprünge aus dem Fußgelenk, Knie fast gestreckt' }
+    : { label: light ? '2 × 5' : '3 × 5', text: 'Kniebeuge-Sprünge oder Box-Jumps, explosiv hoch, leise landen – volle Pause' };
+  const count = D >= 45 ? 2 : D >= 35 ? 1 : 0;
   return {
     title: `Kraft Einheit ${useA ? 'A' : 'B'}`,
     steps: [
-      { label: '5 min', text: 'aufwärmen auf Rad oder Crosstrainer' },
-      ...exercises.slice(0, count).map((e) => ({ label: `${sets} × ${reps}`, text: `${e} – 90 s Pause` })),
-      intensity === 'easy' ? { label: 'Hinweis', text: 'etwas leichter als sonst, Fokus auf saubere Ausführung' } : null
+      { label: '8 min', text: 'aufwärmen auf Rad oder Crosstrainer, dann je 1 leichter Satz der ersten Übung' },
+      light ? null : jumps,
+      ...main.map((e) => ({ label: heavy, text: `${e} – ${heavyText}` })),
+      ...accessory.slice(0, count).map((e) => ({ label: '2 × 10–12', text: `${e} – 60–90 s Pause` })),
+      light ? { label: 'Hinweis', text: 'Leichte Variante (Entlastung oder eingeschränkte Erholung): Technik und Spannung halten, nicht ausbelasten' } : { label: 'Hinweis', text: 'Nicht am Tag vor einer harten Einheit. Gewicht steigern, sobald 6 Wdh. in allen Sätzen sauber gehen.' }
     ]
   };
 }

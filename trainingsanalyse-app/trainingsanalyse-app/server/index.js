@@ -428,7 +428,8 @@ function performanceInfo(s) {
   return {
     run: run ? Object.assign({}, run, { tenK: performance.formatTime(run.tenKSec), table: performance.paceTable(run.tenKSec) }) : null,
     runTest: s.athlete.runTest || null,
-    ftp: s.athlete.ftp || null
+    ftp: s.athlete.ftp || null,
+    lthr: performance.lthrInfo(s)
   };
 }
 
@@ -662,6 +663,10 @@ route('POST', '/api/settings', async (req, res) => {
     const t = body.runTest;
     const sec = t ? performance.parseTime(t.time) : null;
     s.athlete.runTest = t && performance.RUN_DISTANCES[t.distance] && sec ? { distance: t.distance, timeSec: sec, date: new Date().toISOString().slice(0, 10) } : null;
+  }
+  if (body.lthr !== undefined) {
+    const l = Math.round(Number(body.lthr));
+    s.athlete.lthr = l >= 120 && l <= 210 ? l : null;
   }
   if (body.ftp !== undefined) {
     const f = Math.round(Number(body.ftp));

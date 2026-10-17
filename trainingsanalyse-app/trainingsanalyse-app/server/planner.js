@@ -36,7 +36,7 @@ const INTENSITY_PER_MIN = {
 
 const SESSION_DESCRIPTIONS = {
   easy: { Run: 'Locker in Zone 2', Ride: 'Locker in Zone 2', Swim: 'Technik & Grundlage', WeightTraining: 'Kraft, leichte Variante', default: 'Locker' },
-  moderate: { Run: 'Tempo in Zone 3', Ride: 'Sweet Spot in Zone 3', Swim: 'Ausdauer zügig', WeightTraining: 'Kraft', default: 'Mittel' },
+  moderate: { Run: 'Unterschwellige Intervalle', Ride: 'Sweet Spot (unterschwellig)', Swim: 'Ausdauer zügig', WeightTraining: 'Kraft', default: 'Mittel' },
   hard: { Run: 'Intervalle in Zone 4', Ride: 'Intervalle in Zone 5', Swim: 'Tempo-Intervalle', WeightTraining: 'Kraft', default: 'Intensiv' }
 };
 
@@ -168,16 +168,20 @@ function computeWeekVolume(store, goal, phase, ctx) {
   const reasons = [];
   let base;
 
+  // Belastungssignal: Form (Fitness − Ermüdung in % der Fitness), sonst ACWR
+  const fp = ctx.formPct;
+  const overloaded = fp !== null && fp !== undefined ? fp < -30 : ctx.acwr !== null && ctx.acwr > 1.5;
+  const elevated = fp !== null && fp !== undefined ? fp < -20 : ctx.acwr !== null && ctx.acwr > 1.3;
   if (prev) {
-    if (ctx.acwr !== null && ctx.acwr > 1.5) {
+    if (overloaded) {
       base = prev * 0.85;
-      reasons.push('Belastung war zuletzt deutlich erhöht – Umfang −15 %');
+      reasons.push(fp !== null && fp !== undefined ? `Ermüdung deutlich über deiner Fitness (Form ${fp} %) – Umfang −15 %` : 'Belastung war zuletzt deutlich erhöht – Umfang −15 %');
     } else if (ctx.recoveryStatus === 'eingeschränkt') {
       base = prev;
       reasons.push('Erholung eingeschränkt – Umfang wird gehalten');
-    } else if (ctx.acwr !== null && ctx.acwr > 1.3) {
+    } else if (elevated) {
       base = prev;
-      reasons.push('Belastung leicht erhöht – Umfang wird gehalten');
+      reasons.push(fp !== null && fp !== undefined ? `Ermüdung erhöht (Form ${fp} %) – Umfang wird gehalten` : 'Belastung leicht erhöht – Umfang wird gehalten');
     } else if (ctx.rpe && ctx.rpe.overloaded) {
       base = prev;
       reasons.push(`Training fühlte sich zuletzt sehr anstrengend an (Ø ${ctx.rpe.weekAvg.toFixed(1).replace('.', ',')}/10) – Umfang wird gehalten`);
@@ -413,7 +417,18 @@ function buildWeek(store, weekStartKey, firstDay, opts = {}) {
   }
   const report = analysis.buildAnalysisReport(store.activities, athlete);
   const rec = recovery.computeRecovery(store.health, now);
-  const ctx = { now, acwr: report.acwr.acwr, recoveryStatus: rec ? rec.status : null, completionRate: opts.completionRate ?? null, rpe: performance.rpeSignal(store, now) };
+  // Entlastung nach Erholungsdaten vorziehen: HRV-Trend unter der Normalspanne
+  // UND (Erholung eingeschränkt ODER Training fühlt sich zu schwer an)
+  const rpeNow = performance.rpeSignal(store, now);
+  const lastPhase = store.plan.lastDecision && store.plan.lastDecision.phase;
+  if (['base', 'build', 'peak'].includes(phase.key) && lastPhase !== 'recovery' && rec && rec.hrv && rec.hrv.state === 'niedrig'
+    && (rec.status === 'eingeschränkt' || rpeNow.overloaded || rpeNow.easyTooHard)) {
+    phase = Object.assign({}, phase, PHASES.recovery, {
+      key: 'recovery',
+      text: 'Vorgezogene Entlastung: Dein HRV-Trend liegt unter deiner Normalspanne und die Belastung zeigt Spuren – diese Woche weniger Umfang, nur locker.'
+    });
+  }
+  const ctx = { now, acwr: report.acwr.acwr, formPct: report.fitness && report.fitness.reliable ? report.fitness.formPct : null, recoveryStatus: rec ? rec.status : null, completionRate: opts.completionRate ?? null, rpe: performance.rpeSignal(store, now) };
 
   const vol = opts.volume || computeWeekVolume(store, goal, phase, ctx);
   const freeDays = [0, 1, 2, 3, 4, 5, 6].filter((d) => !goal.restDays.includes(d));
@@ -685,12 +700,15 @@ function suggestAdjustment(store, rec, todayKey) {
   const heavyYesterday = (store.activities || []).find((a) => a.rpe >= 9 && analysis.dayKeyOf(new Date(a.startDate)) === yesterday);
   const shortNight = rec && rec.lastNight && rec.lastNight.total < 6;
   const limited = rec && rec.status === 'eingeschränkt';
-  const trigger = limited || (shortNight && session.intensity === 'hard') || (heavyYesterday && session.intensity === 'hard');
+  const hrvLow = rec && rec.hrv && rec.hrv.todayLow;
+  const trigger = limited || ((shortNight || heavyYesterday || hrvLow) && session.intensity === 'hard');
   if (!trigger) return null;
   const easy = easyVersion(session);
   const reason = limited
     ? `Deine Erholung ist eingeschränkt: ${rec.reasons.join(', ')}.`
-    : shortNight
+    : hrvLow && !shortNight && !heavyYesterday
+      ? `Deine HRV liegt heute deutlich unter deinem Normalbereich (${rec.hrv.range ? rec.hrv.range.join('–') + ' ms' : ''}) – Zeichen für Ermüdung oder Stress.`
+      : shortNight
       ? `Du hast letzte Nacht nur ${Math.floor(rec.lastNight.total)}:${String(Math.round((rec.lastNight.total % 1) * 60)).padStart(2, '0')} h geschlafen.`
       : `Du hast dein Training gestern mit ${heavyYesterday.rpe}/10 bewertet – heute besser locker.`;
   return {

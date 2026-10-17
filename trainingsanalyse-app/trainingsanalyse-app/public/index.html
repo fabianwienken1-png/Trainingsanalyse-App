@@ -229,7 +229,7 @@
         <label for="perf-run-distance">Laufen: aktuelle Bestzeit</label>
         <div style="display:flex;gap:8px">
           <select id="perf-run-distance" style="flex:1">
-            <option value="">automatisch schätzen</option>
+            <option value="">automatisch</option>
             <option value="5k">5 km</option>
             <option value="10k">10 km</option>
             <option value="half">Halbmarathon</option>
@@ -238,6 +238,11 @@
           <input id="perf-run-time" type="text" inputmode="numeric" placeholder="z.B. 48:30" style="flex:1" />
         </div>
         <div class="field-hint" id="perf-run-hint"></div>
+      </div>
+      <div class="form-row">
+        <label for="perf-lthr">Schwellenpuls (Laufen)</label>
+        <input id="perf-lthr" type="number" inputmode="numeric" min="120" max="210" placeholder="automatisch" />
+        <div class="field-hint" id="perf-lthr-hint"></div>
       </div>
       <div class="form-row">
         <label for="perf-ftp">Rad: FTP (Watt)</label>

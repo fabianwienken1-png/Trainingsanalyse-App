@@ -219,6 +219,53 @@ function computeSportFrequency(activities, lookbackDays = 56) {
 }
 
 // Baut den vollständigen Analyse-Report für das Dashboard.
+// Fitness / Ermüdung / Form (Banister-Modell, wie CTL/ATL/TSB):
+// Fitness = exponentiell gewichteter Schnitt der Tageslast über ~6 Wochen (42 Tage),
+// Ermüdung = dasselbe über ~1 Woche (7 Tage), Form = Fitness − Ermüdung von gestern.
+// Form in % der Fitness macht den Wert unabhängig von der Punkte-Skala.
+function computeFitness(dailyLoadSeries, now = new Date(), historyDays = 0) {
+  const keys = [...dailyLoadSeries.keys()].sort();
+  if (!keys.length) return null;
+  const todayKey = dayKeyOf(now);
+  const start = new Date(keys[0] + 'T12:00:00Z');
+  const kC = 1 - Math.exp(-1 / 42);
+  const kA = 1 - Math.exp(-1 / 7);
+  let ctl = 0;
+  let atl = 0;
+  let prev = { ctl: 0, atl: 0 };
+  const series = [];
+  for (let d = start; ; d = new Date(d.getTime() + DAY_MS)) {
+    const key = d.toISOString().slice(0, 10);
+    if (key > todayKey) break;
+    prev = { ctl, atl };
+    const load = dailyLoadSeries.get(key) || 0;
+    ctl += (load - ctl) * kC;
+    atl += (load - atl) * kA;
+    series.push({ date: key, ctl: Math.round(ctl * 10) / 10, atl: Math.round(atl * 10) / 10, tsb: Math.round((prev.ctl - prev.atl) * 10) / 10 });
+  }
+  const tsb = prev.ctl - prev.atl; // Form heute = Stand nach gestern
+  const formPct = ctl > 1 ? (tsb / prev.ctl) * 100 : null;
+  const reliable = historyDays >= 42;
+  let state = 'unbekannt';
+  if (formPct !== null && historyDays >= 21) {
+    if (formPct > 25) state = 'erholt';
+    else if (formPct > 5) state = 'frisch';
+    else if (formPct >= -10) state = 'neutral';
+    else if (formPct >= -30) state = 'produktiv';
+    else state = 'überlastet';
+  }
+  return {
+    ctl: Math.round(ctl),
+    atl: Math.round(atl),
+    tsb: Math.round(tsb),
+    formPct: formPct === null ? null : Math.round(formPct),
+    ewmaRatio: ctl > 1 ? Math.round((atl / ctl) * 100) / 100 : null,
+    state,
+    reliable,
+    series: series.slice(-90)
+  };
+}
+
 function buildAnalysisReport(activities, athlete) {
   const dailyLoadSeries = computeDailyLoadSeries(activities, athlete);
   const now = new Date();
@@ -226,6 +273,7 @@ function buildAnalysisReport(activities, athlete) {
   const hasEnoughHistory = coverageDays >= MIN_HISTORY_DAYS_FOR_ACWR;
   const acwr = computeACWR(dailyLoadSeries, now, hasEnoughHistory);
   const monotonyStrain = computeMonotonyStrain(dailyLoadSeries, now);
+  const fitness = computeFitness(dailyLoadSeries, now, coverageDays);
   const thisWeekStart = startOfWeek(now);
   const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * DAY_MS);
   const thisWeek = computeWeeklySummary(activities, athlete, thisWeekStart);
@@ -273,6 +321,7 @@ function buildAnalysisReport(activities, athlete) {
     coverageDays,
     hasEnoughHistory,
     acwr,
+    fitness,
     monotonyStrain,
     thisWeek,
     lastWeek,
@@ -287,6 +336,7 @@ module.exports = {
   computeActivityLoad,
   computeDailyLoadSeries,
   computeACWR,
+  computeFitness,
   computeHistoryCoverageDays,
   computeMonotonyStrain,
   computeWeeklySummary,

@@ -130,11 +130,36 @@ function wattsForZone(ftp, z, pos = 0.5) {
   return { text: `${lo}–${hi} W`, center: Math.round(center) };
 }
 
+// Schwellenpuls (LTHR, Laufen). Manuell eingetragen oder geschätzt:
+// höchster Ø-Puls einer zusammenhängenden harten Einheit (20–70 min, letzte
+// 6 Monate) – so eine Einheit liegt typischerweise knapp an der Schwelle –,
+// mindestens aber 88 % des Maximalpulses (typischer Wert), höchstens 93 %.
+function lthrInfo(store) {
+  const a = store.athlete || {};
+  const manual = Number(a.lthr);
+  if (manual >= 120 && manual <= 210) return { value: Math.round(manual), source: 'manual' };
+  if (!a.maxHR) return null;
+  const now = Date.now();
+  const sustained = (store.activities || [])
+    .filter((x) => ['Run', 'TrailRun', 'Ride', 'VirtualRide'].includes(x.type) && x.averageHeartrate
+      && x.movingTimeSec >= 20 * 60 && x.movingTimeSec <= 70 * 60
+      && now - new Date(x.startDate).getTime() <= 180 * DAY_MS)
+    .map((x) => x.averageHeartrate + (x.type === 'Ride' || x.type === 'VirtualRide' ? 5 : 0)); // Rad-Puls liegt ~5 Schläge tiefer
+  const best = sustained.length ? Math.max(...sustained) : 0;
+  const value = Math.round(Math.min(a.maxHR * 0.93, Math.max(a.maxHR * 0.88, best)));
+  return { value, source: 'auto', basis: best >= a.maxHR * 0.88 ? 'aus deiner härtesten Einheit (20–70 min)' : '88 % deines Maximalpulses' };
+}
+
 // Vorgaben für Workouts (an buildWorkout übergeben)
 function targetsFor(store) {
   const perf = runPerformance(store);
   const ftp = Number(store.athlete && store.athlete.ftp) || null;
-  return { tenKSec: perf ? perf.tenKSec : null, ftp: ftp && ftp >= 80 && ftp <= 600 ? ftp : null };
+  const lthr = lthrInfo(store);
+  return {
+    tenKSec: perf ? perf.tenKSec : null,
+    ftp: ftp && ftp >= 80 && ftp <= 600 ? ftp : null,
+    lthr: lthr ? lthr.value : null
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +268,7 @@ module.exports = {
   paceForZone,
   paceTable,
   wattsForZone,
+  lthrInfo,
   targetsFor,
   rpeSignal,
   trends
