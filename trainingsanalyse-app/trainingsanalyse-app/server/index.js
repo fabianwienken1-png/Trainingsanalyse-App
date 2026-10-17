@@ -220,7 +220,8 @@ route('GET', '/api/state', async (req, res) => {
     appleHealth: {
       importToken: s.appleHealth.importToken,
       lastImportAt: s.appleHealth.lastImportAt,
-      importCount: s.appleHealth.importCount
+      importCount: s.appleHealth.importCount,
+      syncLog: (s.appleHealth.syncLog || []).filter((e) => e.workouts > 0).slice(0, 5)
     },
     recentActivities: s.activities.slice(0, 20),
     recovery: rec,
@@ -561,6 +562,12 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
 
   const result = healthAutoExport.processPayload(s, body);
 
+  // Protokoll der letzten Übertragungen (zur Fehlersuche "Workout fehlt")
+  s.appleHealth.syncLog = [{
+    at: new Date().toISOString(),
+    workouts: result.totalWorkouts,
+    names: result.imported.slice(0, 5).map((a) => `${a.rawType || a.type} ${a.startDate}`)
+  }, ...(s.appleHealth.syncLog || [])].slice(0, 10);
   if (result.imported.length > 0) {
     s.appleHealth.lastImportAt = new Date().toISOString();
     s.appleHealth.importCount = (s.appleHealth.importCount || 0) + result.imported.length;
@@ -590,7 +597,7 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
     console.log(`[dedupe] ${deduped.length} doppelte/zu kurze Einträge beim Import entfernt.`);
   }
 
-  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0 || metricsMerged || Object.keys(hrChanges).length > 0 || planMarked) {
+  if (result.totalWorkouts > 0 || result.imported.length > 0 || Object.keys(athleteDefaults).length > 0 || metricsMerged || Object.keys(hrChanges).length > 0 || planMarked) {
     await saveStore(s);
   }
 

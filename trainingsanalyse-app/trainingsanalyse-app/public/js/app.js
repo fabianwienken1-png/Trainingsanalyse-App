@@ -1742,7 +1742,12 @@ function renderSettings() {
       el('button', { class: 'secondary-btn', type: 'button', onclick: () => copyText(importUrl) }, 'Adresse kopieren'),
       el('button', { class: 'secondary-btn', type: 'button', onclick: onRotateImportToken }, 'Neuer Token')
     ]),
-    el('p', { class: 'muted small', style: 'margin-bottom:0' }, 'In Health Auto Export: Datentyp „Workouts“, Format JSON v2, Routendaten aus.')
+    el('p', { class: 'muted small', style: 'margin-bottom:0' }, 'In Health Auto Export: Datentyp „Workouts“, Format JSON v2, Routendaten aus, Datumsbereich „Letzte 7 Tage“ (doppelte Übertragungen werden automatisch zusammengeführt – so gehen auch Trainings nicht verloren, die z.B. Technogym erst später in Health speichert).'),
+    hc.syncLog && hc.syncLog.length ? el('details', { style: 'margin-top:10px' }, [
+      el('summary', { class: 'small' }, 'Letzte Übertragungen'),
+      ...hc.syncLog.map((e) => el('div', { class: 'muted small', style: 'margin-top:6px' },
+        `${new Date(e.at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: ${e.workouts} Workout(s)${e.names.length ? ' – ' + e.names.map((n) => { const [t, d] = [n.slice(0, n.lastIndexOf(' ')), n.slice(n.lastIndexOf(' ') + 1)]; return `${t} (${new Date(d).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})`; }).join(', ') : ''}`))
+    ]) : null
   );
 
   // Schlaf & Erholung (zweite Automation)

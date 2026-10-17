@@ -136,6 +136,10 @@ function mergeHealthActivity(store, normalized) {
       normalized.type = prev.type;
       normalized.typeOverride = true;
     }
+    // Eigene Angaben (gefühlte Anstrengung) bei erneutem Import behalten –
+    // wichtig, wenn Health Auto Export denselben Zeitraum mehrfach sendet
+    if (prev.rpe && !normalized.rpe) normalized.rpe = prev.rpe;
+    if (prev.rpeSkipped) normalized.rpeSkipped = true;
     store.activities[idx] = normalized;
   } else {
     store.activities.push(normalized);
