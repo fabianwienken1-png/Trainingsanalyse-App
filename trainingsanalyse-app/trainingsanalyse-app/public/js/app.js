@@ -492,6 +492,18 @@ function infoContent(key) {
             ? 'Wenige Einheiten mit Ruhetagen dazwischen – unkritisch.'
             : 'Gute Abwechslung zwischen härteren und leichteren Tagen.')
       };
+    case 'plan': {
+      const d = currentState.plan.lastDecision || {};
+      return {
+        title: 'So entsteht dein Plan',
+        paras: [
+          'Phasen: Ohne Wettkampf trainierst du in der Grundlage. Mit Wettkampf-Datum durchläuft der Plan Grundlage (mehr als 16 Wochen vorher) → Aufbau → Wettkampfvorbereitung (letzte 8 Wochen, mit Koppeltraining) → Tapering (2 Wochen) → Wettkampfwoche. Jede 4. Woche ist eine Entlastungswoche.',
+          'Umfang: steigt um max. 10 % pro Woche – aber nur, wenn du die Vorwoche zu mindestens 70 % geschafft hast, die Belastung (ACWR) nicht erhöht und deine Erholung nicht eingeschränkt ist. Obergrenze sind deine verfügbaren Stunden.',
+          'Verteilung: Triathlon-Mix nach Distanz, lange Einheiten am Wochenende, nur 1–2 fordernde Einheiten pro Woche (80/20-Prinzip), Kraft fest eingeplant. Jeden Montag wird die Vorwoche ausgewertet und automatisch neu geplant.'
+        ],
+        current: d.reason || null
+      };
+    }
     case 'erholung': {
       const rec = currentState.recovery;
       return {
@@ -718,15 +730,9 @@ function spontanIcon(w) {
   return sportIcon(g);
 }
 
-function renderSpontanResult(data) {
-  const w = data.primary;
-  const nodes = [];
-  if (data.plannedToday) {
-    nodes.push(el('div', { class: 'rec-note', style: 'margin:0' },
-      `Heute steht schon ${sportLabel(data.plannedToday.sport)} (${INTENSITY_LABELS[data.plannedToday.intensity] || ''}, ${data.plannedToday.durationMin} min) im Plan. Wenn du nur einmal trainierst, hat die Plan-Einheit Vorrang.`));
-  }
+function workoutCard(w, whyTitle = 'Warum dieser Vorschlag?') {
   const meta = [`${w.minutes} min`, w.distance ? `ca. ${w.distance.toLocaleString('de-DE')} m` : null].filter(Boolean).join(' · ');
-  nodes.push(el('div', { class: 'card spontan-card' }, [
+  return el('div', { class: 'card spontan-card' }, [
     el('div', { class: 'spontan-head' }, [
       spontanIcon(w),
       el('div', { class: 'txt' }, [
@@ -748,10 +754,20 @@ function renderSpontanResult(data) {
     w.steps.some((st) => st.hr) ? null : (w.sport === 'strength' ? null : el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Trag Maximal- und Ruhepuls in den Einstellungen ein, dann siehst du hier zu jedem Abschnitt den Zielpuls.')),
     w.sport === 'swim' && w.steps.some((st) => st.hr) ? el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Im Wasser liegt der Puls bei gleicher Anstrengung meist 10–15 Schläge niedriger als an Land – die Zielwerte sind deshalb niedriger angesetzt.') : null,
     w.why && w.why.length ? el('div', { class: 'why' }, [
-      el('div', { class: 'small muted', style: 'margin-bottom:6px' }, 'Warum dieser Vorschlag?'),
+      el('div', { class: 'small muted', style: 'margin-bottom:6px' }, whyTitle),
       el('ul', {}, w.why.map((r) => el('li', {}, r.charAt(0).toUpperCase() + r.slice(1))))
     ]) : null
-  ]));
+  ]);
+}
+
+function renderSpontanResult(data) {
+  const w = data.primary;
+  const nodes = [];
+  if (data.plannedToday) {
+    nodes.push(el('div', { class: 'rec-note', style: 'margin:0' },
+      `Heute steht schon ${sportLabel(data.plannedToday.sport)} (${INTENSITY_LABELS[data.plannedToday.intensity] || ''}, ${data.plannedToday.durationMin} min) im Plan. Wenn du nur einmal trainierst, hat die Plan-Einheit Vorrang.`));
+  }
+  nodes.push(workoutCard(w));
   if (data.alternatives && data.alternatives.length) {
     nodes.push(el('h3', { class: 'section-title', style: 'margin-top:4px' }, w.sport === 'rest' ? 'Falls du dich doch fit fühlst' : 'Alternativen'));
     for (const alt of data.alternatives) {
@@ -803,6 +819,10 @@ async function setLibrary(w, created) {
     if (!res.ok) throw new Error(body.error || 'Unbekannter Fehler');
     currentState.workoutLibrary = body.library;
     if (document.getElementById('spontan-dialog').open) loadSpontan();
+    if (document.getElementById('session-detail-dialog').open && openSessionId) {
+      await refresh();
+      openSessionDetail(openSessionId);
+    }
     renderLibrary();
   } catch (err) {
     alert('Speichern fehlgeschlagen: ' + err.message);
@@ -860,14 +880,17 @@ function renderNextSession(now) {
     ]);
   }
   const g = groupOf(next.sport);
+  const goNext = () => { location.hash = '#plan'; setTimeout(() => openSessionDetail(next.id), 50); };
   const [y, m, d] = next.day.split('-').map(Number);
   const dayDate = new Date(y, m - 1, d);
   const when = next.day === todayKey ? 'Heute' : dayDate.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
-  return el('button', { class: 'card next-card', type: 'button', onclick: goPlan, style: 'width:100%;text-align:left;color:inherit' }, [
-    sportIcon(g),
+  return el('button', { class: 'card next-card', type: 'button', onclick: next.kind === 'race' ? goPlan : goNext, style: 'width:100%;text-align:left;color:inherit' }, [
+    next.kind === 'race' ? el('div', { class: 'sport-icon', style: 'background:#3a2e12;color:#f5b544', html: FLAG_ICON }) : sportIcon(g),
     el('div', { class: 'txt' }, [
       el('div', { class: 't1' }, `Als Nächstes · ${when}`),
-      el('div', { class: 't2' }, `${sportLabel(next.sport)} · ${next.targetDurationMin} min${planTargetHr(next) ? ` · ♥ ${planTargetHr(next)}` : ''}`)
+      el('div', { class: 't2' }, next.kind === 'race'
+        ? next.description
+        : `${next.workout ? next.workout.title : sportLabel(next.sport)} · ${next.targetDurationMin} min${planTargetHr(next) ? ` · ♥ ${planTargetHr(next)}` : ''}`)
     ]),
     chevron()
   ]);
@@ -881,47 +904,73 @@ function chevron() {
 // Tab "Plan"
 // ---------------------------------------------------------------------------
 
+const FLAG_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>';
+const PHASE_CHIP = { base: 'solid-muted', build: 'solid-warning', peak: 'solid-danger', recovery: 'outline-good', taper: 'outline-good', race: 'solid-warning', post: 'outline-good' };
+
 function renderPlan() {
   const info = planWeekInfo();
   const label = document.getElementById('plan-week-label');
   const sessionsBox = document.getElementById('plan-sessions');
   sessionsBox.innerHTML = '';
+  const plan = currentState.plan;
+  const d = plan.lastDecision || {};
+  const goal = currentState.goal || {};
 
-  if (!info.exists || info.stale) {
-    label.textContent = info.exists ? `Letzter Plan: KW ${isoWeek(info.start)}` : '';
+  if (!info.exists) {
+    label.textContent = '';
     mount('plan-summary', el('div', { class: 'card empty-state' }, [
-      info.exists
-        ? 'Dein letzter Plan ist abgelaufen. Lass dir die aktuelle Woche auf Basis deiner Trainingsdaten neu planen.'
-        : 'Noch kein Trainingsplan vorhanden. Der Plan richtet sich nach deiner bisherigen Belastung.',
-      el('button', { class: 'primary-btn', type: 'button', onclick: onRegeneratePlan }, 'Woche planen')
+      'Für diese Woche ist nichts mehr geplant (z.B. nur noch Ruhetage).',
+      el('button', { class: 'primary-btn', type: 'button', onclick: () => openSettings('goal') }, 'Saisonziel & Trainingszeit einstellen')
     ]));
     return;
   }
-
-  const plan = currentState.plan;
   label.textContent = `KW ${isoWeek(info.start)} · ${fmtRange(info.start, addDays(info.start, 6))}`;
 
-  const total = plan.sessions.length;
-  const done = plan.sessions.filter((s) => s.status === 'done').length;
-  const d = plan.lastDecision;
+  const sessions = plan.sessions.filter((s) => s.kind !== 'race');
+  const total = sessions.length;
+  const done = sessions.filter((s) => s.status === 'done').length;
+  const plannedMin = sessions.reduce((a, s) => a + s.targetDurationMin, 0);
+  const doneMin = sessions.filter((s) => s.status === 'done').reduce((a, s) => a + s.targetDurationMin, 0);
+  const countdown = d.weeksToRace !== null && d.weeksToRace !== undefined && d.weeksToRace > 0
+    ? `noch ${d.weeksToRace} ${d.weeksToRace === 1 ? 'Woche' : 'Wochen'} bis ${goal.name || 'zum Wettkampf'}`
+    : d.weeksToRace === 0 ? 'Wettkampfwoche!' : (goal.date ? '' : 'kein Wettkampf eingetragen');
+
   mount('plan-summary', el('div', { class: 'card' }, [
-    el('div', { class: 'card-head', style: 'margin:0' }, [
-      el('h2', {}, 'Wochenziel'),
-      el('span', { class: 'small', style: 'color:var(--text-2)' }, `Woche ${plan.weekIndex}${d && d.isDeload ? ' · Entlastung' : ''}`)
+    el('div', { class: 'card-head', style: 'margin:0 0 10px' }, [
+      el('div', { class: 'head-with-info' }, [el('h2', {}, 'Diese Woche'), infoButton('plan', 'Trainingsplan')]),
+      el('span', { class: `chip ${PHASE_CHIP[d.phase] || 'solid-muted'}` }, d.phaseLabel || 'Grundlage')
     ]),
-    el('div', { class: 'plan-big' }, [el('strong', {}, String(done)), el('span', { class: 'muted' }, `von ${total} Einheiten erledigt`)]),
-    el('div', { class: 'progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(done) },
-      el('span', { style: `width:${total ? (done / total) * 100 : 0}%` })),
-    d && d.reason ? el('div', { class: 'plan-reason' }, d.reason) : null
+    el('div', { class: 'plan-stats' }, [
+      el('div', {}, [el('div', { class: 'label' }, 'Einheiten'), el('div', { class: 'value' }, `${done}/${total}`)]),
+      el('div', {}, [el('div', { class: 'label' }, 'Umfang'), el('div', { class: 'value' }, `${fmtHours(doneMin / 60)}/${fmtHours(plannedMin / 60)} h`)])
+    ]),
+    el('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Wochenfortschritt', 'aria-valuemin': '0', 'aria-valuemax': String(plannedMin), 'aria-valuenow': String(doneMin) },
+      el('span', { style: `width:${plannedMin ? (doneMin / plannedMin) * 100 : 0}%` })),
+    countdown ? el('div', { class: 'plan-countdown' }, [el('span', { 'aria-hidden': 'true', html: FLAG_ICON.replace('width="22" height="22"', 'width="16" height="16"') }), countdown]) : null,
+    d.phaseText ? el('div', { class: 'plan-reason' }, d.phaseText) : null,
+    !goal.date ? el('button', { class: 'link-btn', type: 'button', style: 'margin-top:10px', onclick: () => openSettings('goal') }, 'Wettkampf eintragen') : null
   ]));
 
   const todayKey = localKey(new Date());
   const usedDays = new Set();
   for (const s of plan.sessions) {
     usedDays.add(s.weekday);
-    const [y, m, dd] = s.day.split('-').map(Number);
+    const dd = Number(s.day.split('-')[2]);
     const g = groupOf(s.sport);
     const isToday = s.day === todayKey;
+
+    if (s.kind === 'race') {
+      sessionsBox.appendChild(el('div', { class: `session-row${isToday ? ' today' : ''}` }, [
+        el('div', { class: 'session-day' }, [el('span', { class: 'wd' }, s.weekday), el('span', { class: 'dn' }, String(dd))]),
+        el('div', { class: 'session-card race' }, [
+          el('div', { class: 'session-main' }, [
+            el('div', { class: 'sport-icon sm', style: 'background:#3a2e12;color:#f5b544', html: FLAG_ICON }),
+            el('div', { class: 'session-text' }, [el('div', { class: 'title' }, 'Wettkampf'), el('div', { class: 'desc' }, s.description)])
+          ])
+        ])
+      ]));
+      continue;
+    }
 
     let footer = null;
     let chip = null;
@@ -936,8 +985,6 @@ function renderPlan() {
         el('button', { type: 'button', onclick: () => onSetSessionStatus(s.id, 'done') }, 'Erledigt'),
         el('button', { type: 'button', class: 'ghost', onclick: () => onSetSessionStatus(s.id, 'missed') }, 'Ausgelassen')
       ]);
-    } else {
-      chip = el('span', { class: 'small muted' }, 'geplant');
     }
     if (s.status === 'planned') {
       const extra = s.adjusted
@@ -946,38 +993,69 @@ function renderPlan() {
           el('button', { class: 'reset-btn', type: 'button', onclick: () => onAdjustSession(s.id, 'undo') },
             `Rückgängig (${INTENSITY_LABELS[s.original && s.original.intensity] || ''} · ${s.original ? s.original.targetDurationMin : ''} min)`)
         ])
-        : s.intensity && s.intensity !== 'easy'
+        : s.intensity && s.intensity !== 'easy' && s.sport !== 'WeightTraining'
           ? el('button', { class: 'reset-btn', type: 'button', onclick: () => onAdjustSession(s.id, 'easy', 'Manuell auf locker gesetzt') }, 'Lockerer machen')
           : null;
       footer = footer ? el('div', {}, [footer, extra]) : extra;
     }
 
+    const w = s.workout;
+    const kindTag = { long: 'lang', quality: INTENSITY_LABELS[s.intensity], brick: 'Koppel', strength: null, easy: null }[s.kind];
     sessionsBox.appendChild(el('div', { class: `session-row${isToday ? ' today' : ''}` }, [
       el('div', { class: 'session-day' }, [el('span', { class: 'wd' }, s.weekday), el('span', { class: 'dn' }, String(dd))]),
       el('div', { class: `session-card ${s.status}` }, [
-        el('div', { class: 'session-main' }, [
+        el('button', { class: 'session-main session-open', type: 'button', onclick: () => openSessionDetail(s.id), 'aria-label': `${w ? w.title : sportLabel(s.sport)} – Ablauf anzeigen` }, [
           el('span', { class: 'sport-bar', style: `background:${g.color}` }),
           el('div', { class: 'session-text' }, [
-            el('div', { class: 'title' }, sportLabel(s.sport)),
+            el('div', { class: 'title' }, [w ? w.title : sportLabel(s.sport), kindTag ? el('span', { class: `kind-tag ${s.intensity}` }, kindTag) : null]),
             el('div', { class: 'desc' }, [
-              `${s.targetDurationMin} min · ${s.description}`,
+              `${s.targetDurationMin} min`,
+              w && w.distance ? ` · ca. ${w.distance.toLocaleString('de-DE')} m` : '',
+              w ? el('span', { class: 'code-inline' }, ` · ${w.code}${w.created ? ' ✓' : ''}`) : '',
               planTargetHr(s) ? el('span', { class: 'plan-hr' }, [el('span', { class: 'heart', 'aria-hidden': 'true' }, ' ♥'), ` ${planTargetHr(s)}`]) : null
             ])
           ]),
-          chip
+          chip || chevron()
         ]),
         footer
       ])
     ]));
   }
-  const restDays = WEEKDAYS_SHORT.filter((w) => !usedDays.has(w));
-  if (restDays.length) {
-    sessionsBox.appendChild(el('div', { class: 'small muted', style: 'padding:4px' }, `Ruhetag${restDays.length > 1 ? 'e' : ''}: ${restDays.join(', ')}`));
-  }
+  const restDays = (goal.restDays || []).map((i) => WEEKDAYS_SHORT[i]);
+  const notes = [];
+  if (restDays.length) notes.push(`Ruhetag${restDays.length > 1 ? 'e' : ''}: ${restDays.join(', ')}`);
+  if (d.partialWeek) notes.push('Plan wurde unter der Woche erstellt und gilt ab diesem Tag');
+  if (notes.length) sessionsBox.appendChild(el('div', { class: 'small muted', style: 'padding:4px' }, notes.join(' · ')));
+}
+
+let openSessionId = null;
+function openSessionDetail(id) {
+  openSessionId = id;
+  const s = (currentState.plan.sessions || []).find((x) => x.id === id);
+  if (!s || !s.workout) return;
+  const g = groupOf(s.sport);
+  const why = [];
+  if (s.kind === 'long') why.push('Lange, lockere Einheit – baut deine Grundlagenausdauer für den Wettkampf auf');
+  if (s.kind === 'quality') why.push(s.intensity === 'hard' ? 'Intensiver Reiz für VO2max und Tempohärte – die Pausen locker halten' : 'Tempo-Reiz an der Schwelle – fordernd, aber kontrolliert');
+  if (s.kind === 'brick') why.push('Koppeltraining: gewöhnt die Beine an den Wechsel vom Rad zum Laufen');
+  if (s.kind === 'easy') why.push('Lockere Einheit – fördert die Erholung und den Fettstoffwechsel');
+  if (s.kind === 'strength') why.push('Kraft beugt Verletzungen vor und verbessert die Laufökonomie');
+  if (s.adjusted && s.adjustReason) why.push(s.adjustReason);
+  const w = {
+    sport: g.key, sportLabel: `${s.weekday}, ${new Date(s.day + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })} · ${sportLabel(s.sport)}`,
+    title: s.workout.title, intensity: s.intensity, intensityLabel: INTENSITY_LABELS[s.intensity] || '',
+    minutes: s.targetDurationMin, distance: s.workout.distance, steps: s.workout.steps,
+    code: s.workout.code, device: s.workout.device, created: s.workout.created, why
+  };
+  document.getElementById('session-detail-title').textContent = s.workout.title;
+  mount('session-detail-body', workoutCard(w, 'Wozu diese Einheit?'));
+  const dlg = document.getElementById('session-detail-dialog');
+  if (!dlg.open) dlg.showModal();
 }
 
 // Zielpuls einer Plan-Einheit (Hauptteil) – gleiche Formel wie auf dem Server (Karvonen)
 function planTargetHr(session) {
+  if (session.workout) return session.workout.mainHr || null;
   const a = currentState && currentState.athlete;
   if (!a || !a.maxHR || !a.restingHR || session.sport === 'WeightTraining') return null;
   const [lo, hi, pos] = { easy: [0.6, 0.7, 0.5], moderate: [0.7, 0.8, 0.6], hard: [0.8, 0.9, 0.5] }[session.intensity] || [0.6, 0.7, 0.5];
@@ -1006,6 +1084,7 @@ async function onRegeneratePlan() {
   const btn = document.getElementById('regenerate-plan-btn');
   btn.disabled = true;
   btn.textContent = 'Plane…';
+  if (!confirm('Die restliche Woche ab heute neu verteilen? Erledigte Einheiten bleiben erhalten.')) { btn.disabled = false; btn.textContent = 'Neu planen'; return; }
   try {
     const res = await fetch('/api/plan/regenerate', { method: 'POST' });
     if (!res.ok) throw new Error('Server-Fehler');
@@ -1015,7 +1094,7 @@ async function onRegeneratePlan() {
     alert('Plan-Erstellung fehlgeschlagen: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Neue Woche planen';
+    btn.textContent = 'Neu planen';
   }
 }
 
@@ -1176,6 +1255,9 @@ function setupActivityUi() {
       renderActivities();
     }, 200);
   });
+  setupGoalForm();
+  const sdDialog = document.getElementById('session-detail-dialog');
+  document.getElementById('close-session-detail-btn').addEventListener('click', () => sdDialog.close());
   loadSpontanPrefs();
   const spDialog = document.getElementById('spontan-dialog');
   document.getElementById('open-spontan-btn').addEventListener('click', openSpontan);
@@ -1274,12 +1356,76 @@ function renderAnalysis() {
 
 const SYNC_STALE_DAYS = 3;
 
-function openSettings() {
+function openSettings(section) {
   document.getElementById('settings-dialog').showModal();
+  if (section === 'goal') setTimeout(() => document.getElementById('goal-section').scrollIntoView({ block: 'start' }), 50);
+}
+
+// Saisonziel-Formular
+let goalRestDays = [0];
+function renderGoalForm() {
+  const g = currentState.goal || {};
+  const form = document.getElementById('goal-form');
+  if (!form.contains(document.activeElement)) {
+    document.getElementById('goal-name').value = g.name || '';
+    document.getElementById('goal-date').value = g.date || '';
+    document.getElementById('goal-distance').value = g.distance || 'olympic';
+    document.getElementById('goal-hours').value = g.weeklyHours || 6;
+    document.getElementById('goal-strength').value = String(g.strengthPerWeek ?? 2);
+    goalRestDays = Array.isArray(g.restDays) ? [...g.restDays] : [0];
+  }
+  renderRestDayChips();
+}
+
+function renderRestDayChips() {
+  mount('goal-restdays', ...WEEKDAYS_SHORT.map((wd, i) => el('button', {
+    class: 'filter-chip', type: 'button', 'aria-pressed': String(goalRestDays.includes(i)),
+    onclick: () => {
+      if (goalRestDays.includes(i)) goalRestDays = goalRestDays.filter((d) => d !== i);
+      else if (goalRestDays.length < 3) goalRestDays = [...goalRestDays, i];
+      renderRestDayChips();
+    }
+  }, wd)));
+}
+
+function setupGoalForm() {
+  document.getElementById('goal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.submitter;
+    const goal = {
+      name: document.getElementById('goal-name').value.trim(),
+      date: document.getElementById('goal-date').value || null,
+      distance: document.getElementById('goal-distance').value,
+      weeklyHours: Number(document.getElementById('goal-hours').value) || 6,
+      strengthPerWeek: Number(document.getElementById('goal-strength').value),
+      restDays: goalRestDays
+    };
+    if (goal.date && goal.date < localKey(new Date())) {
+      if (!confirm('Das Datum liegt in der Vergangenheit. Trotzdem speichern?')) return;
+    }
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal })
+      });
+      if (!res.ok) throw new Error('Server-Fehler');
+      document.activeElement && document.activeElement.blur();
+      await refresh();
+      btn.textContent = 'Gespeichert ✓ – Plan aktualisiert';
+      setTimeout(() => { btn.textContent = 'Speichern & Woche neu planen'; }, 2000);
+    } catch (err) {
+      alert('Speichern fehlgeschlagen: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 function renderSettings() {
   renderLibrary();
+  renderGoalForm();
   const a = currentState.athlete;
   const form = document.getElementById('settings-form');
   if (!form.contains(document.activeElement)) {

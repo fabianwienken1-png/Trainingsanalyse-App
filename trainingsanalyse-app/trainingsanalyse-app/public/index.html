@@ -72,7 +72,7 @@
         <div class="eyebrow" id="plan-week-label"></div>
         <h1>Plan</h1>
       </div>
-      <button class="pill-btn" id="regenerate-plan-btn" type="button">Neue Woche planen</button>
+      <button class="pill-btn" id="regenerate-plan-btn" type="button">Neu planen</button>
     </header>
     <div class="view-body">
       <div id="plan-summary"></div>
@@ -160,6 +160,47 @@
   </div>
   <div class="sheet-body">
 
+    <h3 class="section-title" id="goal-section">Saisonziel &amp; Trainingszeit</h3>
+    <form id="goal-form" class="card form-card">
+      <div class="form-row">
+        <label for="goal-name">Wettkampf (Name, optional)</label>
+        <input id="goal-name" type="text" maxlength="60" placeholder="z.B. Triathlon Ingolstadt" />
+      </div>
+      <div class="form-row">
+        <label for="goal-date">Datum</label>
+        <input id="goal-date" type="date" />
+      </div>
+      <div class="form-row">
+        <label for="goal-distance">Distanz</label>
+        <select id="goal-distance">
+          <option value="sprint">Sprintdistanz (0,75 / 20 / 5 km)</option>
+          <option value="olympic">Olympische Distanz (1,5 / 40 / 10 km)</option>
+          <option value="half">Mitteldistanz (1,9 / 90 / 21 km)</option>
+          <option value="full">Langdistanz (3,8 / 180 / 42 km)</option>
+          <option value="none">Kein Wettkampf – Form aufbauen</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="goal-hours">Verfügbare Trainingszeit pro Woche (Stunden)</label>
+        <input id="goal-hours" type="number" inputmode="decimal" min="2" max="25" step="0.5" />
+      </div>
+      <div class="form-row">
+        <label for="goal-strength">Krafteinheiten pro Woche</label>
+        <select id="goal-strength">
+          <option value="0">keine</option>
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+          <option value="3">3×</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <span class="label-like" id="rest-label">Feste Ruhetage</span>
+        <div class="chip-row wrap" id="goal-restdays" role="group" aria-labelledby="rest-label"></div>
+      </div>
+      <p class="muted small" style="margin:0">Der Plan baut darauf auf: Phasen bis zum Wettkampf (Grundlage → Aufbau → Vorbereitung → Tapering), Triathlon-Mix nach Distanz und Steigerung um max. 10 % pro Woche. Speichern plant die laufende Woche neu.</p>
+      <button type="submit" class="primary-btn">Speichern &amp; Woche neu planen</button>
+    </form>
+
     <h3 class="section-title">Athlet</h3>
     <form id="settings-form" class="card form-card">
       <div class="form-row">
@@ -188,7 +229,7 @@
         <label for="setting-deload">Entlastungswoche alle N Wochen</label>
         <input id="setting-deload" type="number" inputmode="numeric" min="2" max="8" />
       </div>
-      <div class="form-row">
+      <div class="form-row" hidden>
         <label for="setting-sessions">Einheiten pro Woche (Startwert ohne Historie)</label>
         <input id="setting-sessions" type="number" inputmode="numeric" min="1" max="10" />
       </div>
@@ -294,6 +335,15 @@
     </div>
     <div id="spontan-result" aria-live="polite"></div>
   </div>
+</dialog>
+
+<!-- ============ PLAN-EINHEIT DETAIL ============ -->
+<dialog id="session-detail-dialog" class="sheet">
+  <div class="sheet-header">
+    <h2 id="session-detail-title">Einheit</h2>
+    <button class="pill-btn" id="close-session-detail-btn" type="button">Schließen</button>
+  </div>
+  <div class="sheet-body" id="session-detail-body"></div>
 </dialog>
 
 <!-- ============ ERKLÄRUNG KENNZAHL ============ -->

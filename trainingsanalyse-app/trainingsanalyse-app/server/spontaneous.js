@@ -429,4 +429,4 @@ function suggest(store, opts = {}) {
   };
 }
 
-module.exports = { suggest };
+module.exports = { suggest, buildWorkout, workoutCode, swimPace, MAX_SWIM_MIN, MAX_STRENGTH_MIN };

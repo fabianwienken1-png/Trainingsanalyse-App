@@ -1,63 +1,42 @@
-// Regelbasierte Trainingsplan-Engine.
+// Trainingsplan-Engine (Triathlon, mit Saisonziel).
 //
-// Bewusst NICHT als Black-Box-ML-Modell umgesetzt, sondern als nachvollziehbare
-// Regeln, damit du immer verstehst, WARUM sich dein Plan verändert. Jede Regel
-// ist unten kommentiert. Die wichtigsten Prinzipien:
-//
-//  1. Wöchentliche Belastungssteigerung ist gedeckelt (Default 10%) - orientiert
-//     an der verbreiteten Trainings-Faustregel gegen Überlastungsverletzungen.
-//  2. Alle N Wochen (Default 4) folgt automatisch eine Deload-Woche (-40% Last).
-//  3. Ist die ACWR (siehe analysis.js) erhöht, wird nicht weiter gesteigert,
-//     sondern gehalten oder reduziert.
-//  4. Wurden in der Vorwoche >30% der geplanten Einheiten verpasst, wird die
-//     Zielbelastung nicht weiter erhöht (kein "Nachholdruck").
-//  5. Die Sportart-Verteilung im Plan orientiert sich an deiner tatsächlichen
-//     Trainingshistorie der letzten 8 Wochen (aus Strava/Apple Fitness importiert).
+// Nachvollziehbare Regeln statt Black Box:
+//  1. Saisonphase aus dem Abstand zum Wettkampf: Grundlage → Aufbau →
+//     Wettkampfvorbereitung → Tapering → Wettkampfwoche → Regeneration.
+//     Jede 4. Woche ist eine Entlastungswoche. Ohne Wettkampf: Grundlage mit
+//     Entlastung alle N Wochen (Einstellung).
+//  2. Wochenumfang (Minuten) wächst max. um die eingestellte Steigerung (Default
+//     10 %) und nur, wenn die Vorwoche zu ≥ 70 % erledigt wurde, die Belastung
+//     (ACWR) nicht erhöht und die Erholung nicht eingeschränkt ist. Obergrenze:
+//     die verfügbaren Stunden pro Woche.
+//  3. Triathlon-Mix nach Distanz (z.B. Olympisch: ~22 % Schwimmen, 43 % Rad,
+//     35 % Lauf), lange Einheiten am Wochenende, 80/20-Verteilung (wenige
+//     harte Einheiten, Rest locker), Kraft fest 0–3× pro Woche.
+//  4. Jede Einheit bekommt einen festen Ablauf mit Zielpuls (siehe
+//     spontaneous.js – gleiche Vorlagen und Codes wie "Spontan trainieren").
+//  5. Der Plan gilt immer für die laufende Woche. Zu Wochenbeginn wird die
+//     Vorwoche ausgewertet und automatisch neu geplant.
 
 const analysis = require('./analysis');
 const recovery = require('./recovery');
+const workouts = require('./spontaneous');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 
-// Grobe Ziel-Intensität (Trainingslast-Punkte pro Minute) je Sportart & Härtegrad,
-// wird genutzt um aus einer Ziel-Last eine Ziel-Dauer abzuleiten (Umkehrung der
-// Fallback-Formel aus analysis.js, damit Last <-> Dauer konsistent zueinander sind).
+// Trainingslast-Punkte pro Minute (für die Lastschätzung einer geplanten Einheit)
 const INTENSITY_PER_MIN = {
   Run: { easy: 5, moderate: 8, hard: 11 },
-  TrailRun: { easy: 5.5, moderate: 8.5, hard: 11.5 },
   Ride: { easy: 3.5, moderate: 6, hard: 8.5 },
-  VirtualRide: { easy: 3.5, moderate: 6, hard: 8.5 },
   Swim: { easy: 5, moderate: 7.5, hard: 10 },
   WeightTraining: { easy: 3, moderate: 4.5, hard: 6 },
-  Walk: { easy: 2, moderate: 3, hard: 4 },
-  Hike: { easy: 3, moderate: 4.5, hard: 6 },
-  Yoga: { easy: 1.5, moderate: 2.5, hard: 3.5 },
   default: { easy: 4, moderate: 6, hard: 8 }
 };
 
 const SESSION_DESCRIPTIONS = {
-  easy: {
-    Run: 'Ruhiger Dauerlauf, Ziel-HF Zone 2 (locker, Unterhaltung möglich)',
-    Ride: 'Lockere Ausfahrt, Ziel-HF Zone 2',
-    Swim: 'Lockeres Schwimmen, Fokus Technik',
-    WeightTraining: 'Kraft – Grundlagenbereich, moderate Gewichte, saubere Ausführung',
-    default: 'Lockere Einheit, niedrige Intensität (Zone 2)'
-  },
-  moderate: {
-    Run: 'Lauf im moderaten Tempo (Zone 3), z.B. Fahrtspiel oder progressiver Dauerlauf',
-    Ride: 'Ausfahrt mit Tempowechseln, Zone 3',
-    Swim: 'Intervalle im moderaten Tempo',
-    WeightTraining: 'Kraft – höheres Volumen/Gewicht als Grundlagenreiz',
-    default: 'Mittlere Intensität, spürbare Anstrengung (Zone 3)'
-  },
-  hard: {
-    Run: 'Intensive Einheit: Intervalle/Tempolauf (Zone 4-5)',
-    Ride: 'Intensive Einheit: Intervalle (Zone 4-5)',
-    Swim: 'Intensive Intervalle',
-    WeightTraining: 'Kraft – hohe Intensität/Maximalkraft oder Krafteausdauer',
-    default: 'Hohe Intensität, harte Einheit (Zone 4-5)'
-  }
+  easy: { Run: 'Locker in Zone 2', Ride: 'Locker in Zone 2', Swim: 'Technik & Grundlage', WeightTraining: 'Kraft, leichte Variante', default: 'Locker' },
+  moderate: { Run: 'Tempo in Zone 3', Ride: 'Sweet Spot in Zone 3', Swim: 'Ausdauer zügig', WeightTraining: 'Kraft', default: 'Mittel' },
+  hard: { Run: 'Intervalle in Zone 4', Ride: 'Intervalle in Zone 5', Swim: 'Tempo-Intervalle', WeightTraining: 'Kraft', default: 'Intensiv' }
 };
 
 function describeSession(sport, intensity) {
@@ -67,220 +46,559 @@ function describeSession(sport, intensity) {
 
 function getIntensityFactor(sport, intensity) {
   const table = INTENSITY_PER_MIN[sport] || INTENSITY_PER_MIN.default;
-  return table[intensity];
-}
-
-// Realistische Basis-Dauern (in Minuten) je Sportart & Härtegrad. Dienen als
-// Ausgangsform für die Session-Verteilung: harte Einheiten sind kürzer und
-// intensiver, lockere Einheiten länger - so wie ein Trainer sie ansetzen würde.
-// Diese Rohdauern werden anschließend gemeinsam so skaliert, dass die Summe
-// ihrer Last exakt die berechnete Wochenzielbelastung ergibt (siehe buildSessions).
-const BASE_DURATION_MIN = {
-  Run: { easy: 50, moderate: 40, hard: 35 },
-  TrailRun: { easy: 60, moderate: 45, hard: 40 },
-  Ride: { easy: 75, moderate: 60, hard: 45 },
-  VirtualRide: { easy: 60, moderate: 50, hard: 40 },
-  Swim: { easy: 40, moderate: 35, hard: 30 },
-  WeightTraining: { easy: 45, moderate: 50, hard: 45 },
-  Walk: { easy: 45, moderate: 40, hard: 35 },
-  Hike: { easy: 90, moderate: 75, hard: 60 },
-  Yoga: { easy: 40, moderate: 40, hard: 35 },
-  default: { easy: 45, moderate: 40, hard: 35 }
-};
-
-function getBaseDuration(sport, intensity) {
-  const table = BASE_DURATION_MIN[sport] || BASE_DURATION_MIN.default;
-  return table[intensity];
+  return table[intensity] || table.easy;
 }
 
 function round1(n) {
   return Math.round(n * 10) / 10;
 }
 
-// Gleicht die Vorwoche (falls ein Plan existierte) mit den tatsächlich
-// importierten Aktivitäten ab: Session gilt als "erledigt", wenn am selben Tag
-// (±1 Tag Toleranz) eine Aktivität derselben Sportart importiert wurde.
-function evaluatePreviousWeek(store) {
-  const { plan, activities, athlete } = store;
-  if (!plan.currentWeekStart || plan.sessions.length === 0) return null;
-
-  const weekStart = new Date(plan.currentWeekStart + 'T00:00:00Z');
-  const evaluated = plan.sessions.map((session) => {
-    // Manuell gesetzter Status (siehe POST /api/plan/session-status) hat
-    // Vorrang vor der automatischen ±1-Tag-Erkennung - der Nutzer weiß es
-    // besser als die Heuristik (z.B. Einheit ohne Tracking absolviert, oder
-    // bewusst als "übersprungen" markiert statt fälschlich "erledigt").
-    if (session.manualOverride) return session;
-    const sessionDate = new Date(session.day + 'T00:00:00Z');
-    const match = activities.find((act) => {
-      const actDate = new Date(act.startDate);
-      const diffDays = Math.abs((actDate.getTime() - sessionDate.getTime()) / DAY_MS);
-      return diffDays <= 1 && act.type === session.sport;
-    });
-    return { ...session, status: match ? 'done' : 'missed', matchedActivityId: match ? match.id : null };
-  });
-
-  const doneCount = evaluated.filter((s) => s.status === 'done').length;
-  const completionRate = evaluated.length > 0 ? doneCount / evaluated.length : 1;
-  const summary = analysis.computeWeeklySummary(activities, athlete, weekStart);
-
-  return { weekStart: plan.currentWeekStart, sessions: evaluated, completionRate: round1(completionRate * 100), summary };
+const SPORT_GROUP = { Ride: 'bike', VirtualRide: 'bike', Run: 'run', TrailRun: 'run', Swim: 'swim', WeightTraining: 'strength' };
+const GROUP_TYPE = { bike: 'Ride', run: 'Run', swim: 'Swim', strength: 'WeightTraining' };
+function groupOf(type) {
+  return SPORT_GROUP[type] || 'other';
 }
 
-// Ermittelt die Basis-Zielbelastung für die kommende Woche.
-function computeBaseTargetLoad(store, lastWeekSummary) {
-  if (lastWeekSummary && lastWeekSummary.totalLoad > 5) {
-    return lastWeekSummary.totalLoad;
-  }
-  // Kein/kaum Trainingsdaten der Vorwoche: konservativer Startwert basierend auf
-  // Default-Sessions/Woche à 40 Minuten im lockeren Bereich.
-  const sessions = store.athlete.sessionsPerWeekDefault || 3;
-  return sessions * 40 * INTENSITY_PER_MIN.default.easy;
+// ---------------------------------------------------------------------------
+// Saisonziel & Phasen
+// ---------------------------------------------------------------------------
+
+const DISTANCES = {
+  sprint: { label: 'Sprintdistanz', share: { swim: 0.22, bike: 0.43, run: 0.35 }, brick: 15 },
+  olympic: { label: 'Olympische Distanz', share: { swim: 0.22, bike: 0.43, run: 0.35 }, brick: 20 },
+  half: { label: 'Mitteldistanz', share: { swim: 0.18, bike: 0.5, run: 0.32 }, brick: 30 },
+  full: { label: 'Langdistanz', share: { swim: 0.16, bike: 0.52, run: 0.32 }, brick: 30 },
+  none: { label: 'Kein Wettkampf', share: { swim: 0.22, bike: 0.43, run: 0.35 }, brick: 0 }
+};
+
+const DEFAULT_GOAL = { name: '', date: null, distance: 'olympic', weeklyHours: 6, strengthPerWeek: 2, restDays: [0] };
+
+function getGoal(athlete) {
+  const g = Object.assign({}, DEFAULT_GOAL, athlete.goal || {});
+  if (!DISTANCES[g.distance]) g.distance = 'olympic';
+  g.weeklyHours = Math.min(25, Math.max(2, Number(g.weeklyHours) || DEFAULT_GOAL.weeklyHours));
+  g.strengthPerWeek = Math.min(3, Math.max(0, Math.round(Number(g.strengthPerWeek))));
+  if (!Number.isFinite(g.strengthPerWeek)) g.strengthPerWeek = 2;
+  g.restDays = Array.isArray(g.restDays) ? g.restDays.filter((d) => d >= 0 && d <= 6) : [0];
+  if (g.restDays.length > 3) g.restDays = g.restDays.slice(0, 3);
+  return g;
 }
 
-function decideMultiplierAndReason(store, weekIndex, acwr, completionRate) {
-  const cap = store.athlete.weeklyIncreaseCap ?? 0.1;
-  const deloadEvery = store.athlete.deloadEveryNWeeks ?? 4;
+const PHASES = {
+  base: { label: 'Grundlage', volume: 1.0, quality: 1, text: 'Viel lockere Ausdauer, eine fordernde Einheit pro Woche.' },
+  build: { label: 'Aufbau', volume: 1.0, quality: 2, text: 'Umfang hoch, zwei fordernde Einheiten pro Woche.' },
+  peak: { label: 'Wettkampfvorbereitung', volume: 1.0, quality: 2, text: 'Wettkampfnahe Intensität und Koppeltraining (Rad + Lauf).' },
+  recovery: { label: 'Entlastungswoche', volume: 0.65, quality: 0, text: 'Weniger Umfang, nur locker – der Körper verarbeitet die letzten Wochen.' },
+  taper: { label: 'Tapering', volume: 0.7, quality: 1, text: 'Umfang runter, Intensität kurz halten – frisch werden für den Wettkampf.' },
+  race: { label: 'Wettkampfwoche', volume: 0.4, quality: 1, text: 'Nur kurze, lockere Einheiten mit ein paar Steigerungen. Viel schlafen!' },
+  post: { label: 'Regeneration', volume: 0.4, quality: 0, text: 'Nach dem Wettkampf: nur locker bewegen.' }
+};
 
-  if (weekIndex > 0 && weekIndex % deloadEvery === 0) {
-    return { multiplier: 0.6, reason: `Deload-Woche (jede ${deloadEvery}. Woche) – bewusste Erholungswoche zur Regeneration.` };
-  }
-  if (acwr.acwr !== null && acwr.acwr > 1.5) {
-    return { multiplier: 0.75, reason: 'ACWR war zuletzt hoch (>1.5) – Belastung wird reduziert, um Verletzungsrisiko zu senken.' };
-  }
-  if (acwr.acwr !== null && acwr.acwr > 1.3) {
-    return { multiplier: 0.95, reason: 'ACWR leicht erhöht – Belastung wird gehalten statt weiter gesteigert.' };
-  }
-  const rec = recovery.computeRecovery(store.health);
-  if (rec && rec.status === 'eingeschränkt') {
-    return { multiplier: 0.9, reason: `Erholung eingeschränkt – ${rec.reasons.join('; ')}. Die Belastung wird leicht reduziert: mehr Schlaf bringt jetzt mehr als mehr Training.` };
-  }
-  if (completionRate !== null && completionRate < 70) {
-    return { multiplier: 1.0, reason: `Nur ${completionRate}% der letzten Woche geplanten Einheiten absolviert – Zielbelastung bleibt konstant statt zu steigen.` };
-  }
-  return { multiplier: 1 + cap, reason: `Normale Progression: +${Math.round(cap * 100)}% gegenüber Vorwoche.` };
+function mondayKeyOf(dateKey) {
+  const d = new Date(dateKey + 'T00:00:00Z');
+  const day = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() + ((day === 0 ? -6 : 1) - day));
+  return d.toISOString().slice(0, 10);
 }
 
-// Verteilt die Ziel-Gesamtlast auf konkrete Sessions über die Woche.
-function buildSessions(weekStartDate, targetTotalLoad, sportFrequency, isDeload) {
-  // Sportart-Mix aus Historie ableiten (mind. 1 Session, max 6 pro Woche)
-  let mix = Object.entries(sportFrequency.sessionsPerWeek)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4); // max. 4 verschiedene Sportarten im Plan, sonst zu unübersichtlich
+function weeksBetween(fromMonday, toMonday) {
+  return Math.round((new Date(toMonday + 'T00:00:00Z') - new Date(fromMonday + 'T00:00:00Z')) / (7 * DAY_MS));
+}
 
-  if (mix.length === 0) {
-    mix = [['Run', 3]];
+function phaseFor(goal, weekStartKey, weekIndex, deloadEvery) {
+  if (goal.date && goal.distance !== 'none') {
+    const weeksTo = weeksBetween(weekStartKey, mondayKeyOf(goal.date));
+    let key;
+    if (weeksTo < -1) key = null;
+    else if (weeksTo === -1) key = 'post';
+    else if (weeksTo === 0) key = 'race';
+    else if (weeksTo <= 2) key = 'taper';
+    else if (weeksTo >= 6 && (weeksTo - 2) % 4 === 0) key = 'recovery';
+    else if (weeksTo <= 8) key = 'peak';
+    else if (weeksTo <= 16) key = 'build';
+    else key = 'base';
+    if (key) {
+      const ph = Object.assign({ key, weeksTo }, PHASES[key]);
+      if (key === 'taper') ph.volume = weeksTo === 1 ? 0.6 : 0.75;
+      return ph;
+    }
+  }
+  const every = deloadEvery || 4;
+  const key = weekIndex > 0 && weekIndex % every === 0 ? 'recovery' : 'base';
+  return Object.assign({ key, weeksTo: null }, PHASES[key]);
+}
+
+// ---------------------------------------------------------------------------
+// Wochenumfang
+// ---------------------------------------------------------------------------
+
+function chronicWeeklyMinutes(activities, now) {
+  const cutoff = now.getTime() - 28 * DAY_MS;
+  let min = 0;
+  for (const a of activities) {
+    const t = new Date(a.startDate).getTime();
+    if (t >= cutoff && t <= now.getTime() && ['swim', 'bike', 'run'].includes(groupOf(a.type))) min += (a.movingTimeSec || 0) / 60;
+  }
+  return min / 4;
+}
+
+function computeWeekVolume(store, goal, phase, ctx) {
+  const athlete = store.athlete;
+  const availMin = goal.weeklyHours * 60;
+  const strengthMin = strengthCountFor(goal, phase) * 45;
+  const enduranceCap = Math.max(90, availMin - strengthMin);
+  const cap = athlete.weeklyIncreaseCap ?? 0.1;
+  const prev = store.plan.lastDecision && store.plan.lastDecision.baseMinutes;
+  const reasons = [];
+  let base;
+
+  if (prev) {
+    if (ctx.acwr !== null && ctx.acwr > 1.5) {
+      base = prev * 0.85;
+      reasons.push('Belastung war zuletzt deutlich erhöht – Umfang −15 %');
+    } else if (ctx.recoveryStatus === 'eingeschränkt') {
+      base = prev;
+      reasons.push('Erholung eingeschränkt – Umfang wird gehalten');
+    } else if (ctx.acwr !== null && ctx.acwr > 1.3) {
+      base = prev;
+      reasons.push('Belastung leicht erhöht – Umfang wird gehalten');
+    } else if (ctx.completionRate !== null && ctx.completionRate < 70) {
+      base = prev;
+      reasons.push(`Nur ${Math.round(ctx.completionRate)} % der letzten Woche geschafft – Umfang wird gehalten`);
+    } else {
+      base = prev * (1 + cap);
+      reasons.push(`Steigerung um ${Math.round(cap * 100)} %`);
+    }
+  } else {
+    const chronic = chronicWeeklyMinutes(store.activities, ctx.now);
+    base = Math.max(chronic * 1.1, enduranceCap * 0.5);
+    reasons.push(chronic * 1.1 >= enduranceCap * 0.5
+      ? 'Start auf Basis deiner letzten 4 Wochen'
+      : 'Start mit der Hälfte deiner verfügbaren Zeit, dann schrittweise mehr');
   }
 
-  let sessionCount = Math.round(mix.reduce((sum, [, freq]) => sum + freq, 0));
-  sessionCount = Math.max(3, Math.min(isDeload ? 4 : 6, sessionCount || 3));
-
-  // Sessions proportional zur Häufigkeit auf die Sportarten verteilen
-  const totalFreq = mix.reduce((s, [, f]) => s + f, 0) || 1;
-  const sportSlots = [];
-  for (const [sport, freq] of mix) {
-    const count = Math.max(1, Math.round((freq / totalFreq) * sessionCount));
-    for (let i = 0; i < count; i++) sportSlots.push(sport);
+  base = Math.min(enduranceCap, Math.max(120, base));
+  if (base >= enduranceCap - 1) {
+    const i = reasons.findIndex((r) => r.startsWith('Steigerung') || r.startsWith('Start'));
+    const msg = `Obergrenze deiner verfügbaren ${goal.weeklyHours} h erreicht`;
+    if (i >= 0) reasons[i] = msg; else reasons.push(msg);
   }
-  while (sportSlots.length > sessionCount) sportSlots.pop();
-  while (sportSlots.length < sessionCount) sportSlots.push(mix[0][0]);
+  if (phase.volume < 1) reasons.push(`diese Woche bewusst auf ${Math.round(phase.volume * 100)} % reduziert`);
 
-  // Intensitätsverteilung: hauptsächlich locker, 1-2 härtere Reize pro Woche
-  // (klassisches 80/20-Prinzip aus dem Ausdauertraining), in der Deload-Woche nur "easy".
-  const intensityPlan = isDeload
-    ? sportSlots.map(() => 'easy')
-    : sportSlots.map((_, i) => {
-        if (sessionCount >= 4 && i === Math.floor(sessionCount / 2)) return 'hard';
-        if (sessionCount >= 3 && i === sessionCount - 2) return 'moderate';
-        return 'easy';
-      });
+  let target = base * phase.volume;
+  if (ctx.recoveryStatus === 'eingeschränkt' && !reasons[0].startsWith('Erholung')) {
+    target *= 0.9;
+    reasons.push('Erholung eingeschränkt – diese Woche −10 %');
+  }
+  return { baseMinutes: Math.round(base), enduranceMinutes: Math.round(target), reasons };
+}
 
-  // Basis-Dauer & daraus resultierende Basis-Last je Session (siehe BASE_DURATION_MIN).
-  // Die Summe dieser Basis-Lasten wird anschließend auf die Wochenzielbelastung skaliert -
-  // dadurch bleibt die Form des Plans (langer lockerer Lauf, kurze harte Intervalle, ...)
-  // erhalten, während die absolute Belastung exakt zur Zielvorgabe passt.
-  const baseDurations = sportSlots.map((sport, i) => getBaseDuration(sport, intensityPlan[i]));
-  const baseLoads = sportSlots.map((sport, i) => baseDurations[i] * getIntensityFactor(sport, intensityPlan[i]));
-  const baseLoadSum = baseLoads.reduce((a, b) => a + b, 0) || 1;
-  const scale = targetTotalLoad / baseLoadSum;
+function strengthCountFor(goal, phase) {
+  if (['race', 'post'].includes(phase.key)) return Math.min(goal.strengthPerWeek, phase.key === 'post' ? 1 : 0);
+  if (['recovery', 'taper'].includes(phase.key)) return Math.min(goal.strengthPerWeek, 1);
+  return goal.strengthPerWeek;
+}
 
-  // Tage in der Woche verteilen: möglichst 1 Ruhetag, harte Einheit nicht direkt
-  // vor/nach einer anderen harten Einheit. Einfache Heuristik: Slots gleichmäßig
-  // über Mo-So verteilen, So freihalten falls Platz ist.
-  const dayOffsets = pickDayOffsets(sessionCount);
+// ---------------------------------------------------------------------------
+// Einheiten zusammenstellen
+// ---------------------------------------------------------------------------
 
-  const sessions = sportSlots.map((sport, i) => {
-    const intensity = intensityPlan[i];
-    const factor = getIntensityFactor(sport, intensity);
-    const targetDurationMin = Math.max(15, Math.round(baseDurations[i] * scale));
-    const targetLoad = round1(targetDurationMin * factor);
-    const day = new Date(weekStartDate.getTime() + dayOffsets[i] * DAY_MS);
+const BUCKETS = {
+  swim: [30, 45, 60, 75],
+  bike: [30, 45, 60, 75, 90, 105, 120, 150, 180, 210, 240],
+  run: [15, 20, 30, 40, 45, 50, 60, 75, 90, 105, 120, 150],
+  strength: [30, 45, 60]
+};
+const MIN_DURATION = { swim: 30, bike: 45, run: 30 };
+
+function toBucket(sport, minutes) {
+  const list = BUCKETS[sport];
+  return list.reduce((best, v) => (Math.abs(v - minutes) < Math.abs(best - minutes) ? v : best), list[0]);
+}
+
+function sessionCounts(enduranceMinutes) {
+  const h = enduranceMinutes / 60;
+  if (h < 3) return { swim: 1, bike: 1, run: 1 };
+  if (h < 4) return { swim: 1, bike: 1, run: 2 };
+  if (h < 6) return { swim: 2, bike: 2, run: 2 };
+  if (h < 9) return { swim: 2, bike: 2, run: 3 };
+  return { swim: 3, bike: 3, run: 3 };
+}
+
+function composeSessions(goal, phase, enduranceMinutes, weekIndex) {
+  const dist = DISTANCES[goal.distance];
+  const counts = sessionCounts(enduranceMinutes / Math.max(0.4, phase.volume)); // Anzahl nach Grundumfang, nicht nach Entlastung
+  const list = [];
+
+  for (const sport of ['swim', 'bike', 'run']) {
+    let minutes = enduranceMinutes * dist.share[sport];
+    let n = counts[sport];
+    const brick = sport === 'run' && phase.key === 'peak' && dist.brick > 0;
+    if (brick) minutes -= dist.brick;
+    while (n > 1 && minutes / n < MIN_DURATION[sport]) n--;
+    if (minutes < MIN_DURATION[sport] * 0.75) continue;
+
+    const longShare = sport === 'bike' ? (n === 2 ? 0.6 : 0.45) : sport === 'run' ? (n === 2 ? 0.55 : 0.4) : 0;
+    const hasLong = n >= 2 && longShare > 0 && !['race', 'post'].includes(phase.key);
+    const longMin = hasLong ? minutes * longShare : 0;
+    const restEach = (minutes - longMin) / (hasLong ? n - 1 : n);
+
+    if (hasLong) list.push({ sport, kind: 'long', intensity: 'easy', minutes: toBucket(sport, Math.max(MIN_DURATION[sport], longMin)) });
+    for (let i = 0; i < (hasLong ? n - 1 : n); i++) {
+      list.push({ sport, kind: 'easy', intensity: 'easy', minutes: toBucket(sport, Math.max(MIN_DURATION[sport], restEach)) });
+    }
+    if (brick) list.push({ sport: 'run', kind: 'brick', intensity: 'moderate', minutes: toBucket('run', dist.brick) });
+  }
+
+  // Fordernde Einheiten (80/20): auf nicht-lange Rad-/Lauf-Einheiten verteilen
+  const order = weekIndex % 2 === 0 ? ['run', 'bike'] : ['bike', 'run'];
+  let q = phase.quality;
+  const qualityIntensity = {
+    base: ['moderate'], build: ['hard', 'moderate'], peak: ['hard', 'hard'], taper: ['hard'], race: ['hard']
+  }[phase.key] || [];
+  for (let i = 0; q > 0 && i < 4; i++) {
+    const sport = order[i % 2];
+    const cand = list.find((s) => s.sport === sport && s.kind === 'easy');
+    if (!cand) continue;
+    cand.kind = 'quality';
+    cand.intensity = qualityIntensity[phase.quality - q] || 'moderate';
+    const maxQ = sport === 'run' ? 60 : 90;
+    if (['taper', 'race'].includes(phase.key)) cand.minutes = toBucket(sport, Math.min(cand.minutes, sport === 'run' ? 40 : 60));
+    else cand.minutes = toBucket(sport, Math.min(Math.max(cand.minutes, sport === 'run' ? 40 : 60), maxQ));
+    q--;
+  }
+  // Schwimmen: in Aufbau/Vorbereitung eine zügige Einheit
+  if (['build', 'peak'].includes(phase.key)) {
+    const swims = list.filter((s) => s.sport === 'swim');
+    if (swims.length >= 2) swims[1].intensity = 'moderate';
+  }
+  // Wettkampfwoche: alles kurz
+  if (phase.key === 'race') {
+    for (const s of list) s.minutes = toBucket(s.sport, Math.min(s.minutes, s.sport === 'bike' ? 60 : 30));
+  }
+
+  const strength = strengthCountFor(goal, phase);
+  for (let i = 0; i < strength; i++) {
+    list.push({ sport: 'strength', kind: 'strength', intensity: ['recovery', 'taper', 'post'].includes(phase.key) ? 'easy' : 'moderate', minutes: 45, variant: i % 2 === 0 ? 'A' : 'B' });
+  }
+  return list;
+}
+
+// ---------------------------------------------------------------------------
+// Auf Wochentage verteilen
+// ---------------------------------------------------------------------------
+
+const PREFERRED_DAYS = {
+  long_bike: [5, 6, 4, 3, 2, 1, 0],
+  long_run: [6, 5, 3, 2, 4, 1, 0],
+  brick: [],
+  quality_run: [1, 2, 3, 4, 0],
+  quality_bike: [3, 2, 1, 4, 0],
+  easy_swim: [0, 2, 4, 1, 3, 5, 6],
+  easy_run: [2, 4, 1, 3, 0, 5, 6],
+  easy_bike: [2, 4, 1, 3, 0, 5, 6],
+  strength: [0, 2, 4, 1, 3, 5, 6]
+};
+
+function placeSessions(list, goal, firstDay) {
+  const days = [0, 1, 2, 3, 4, 5, 6].filter((d) => d >= firstDay && !goal.restDays.includes(d));
+  const byDay = new Map(days.map((d) => [d, []]));
+  const placed = [];
+  const isHard = (s) => s.kind === 'quality' || s.kind === 'long' || s.kind === 'brick';
+
+  const rank = { long: 0, brick: 1, quality: 2, easy: 3, strength: 4 };
+  const sorted = [...list].sort((a, b) => rank[a.kind] - rank[b.kind] || (a.sport === 'bike' ? -1 : 1));
+
+  const ok = (s, d, strict) => {
+    const daySessions = byDay.get(d);
+    if (!daySessions) return false;
+    const limit = s.kind === 'brick' ? 3 : 2;
+    if (daySessions.length >= limit) return false;
+    if (daySessions.some((x) => x.sport === s.sport && s.kind !== 'brick')) return false;
+    if (!strict) return true;
+    if (s.kind === 'quality') {
+      // keine zwei harten Tage hintereinander
+      for (const nd of [d - 1, d + 1]) if ((byDay.get(nd) || []).some(isHard)) return false;
+      if (daySessions.some(isHard) || daySessions.some((x) => x.kind === 'strength')) return false;
+    }
+    if (s.kind === 'strength') {
+      if (daySessions.some((x) => x.kind === 'quality' || x.kind === 'long')) return false;
+      if ((byDay.get(d + 1) || []).some((x) => x.kind === 'quality')) return false;
+      if ([...byDay.values()].flat().some((x) => x.kind === 'strength' && Math.abs(x._day - d) < 2)) return false;
+    }
+    if (s.kind === 'easy' && daySessions.some((x) => x.kind === 'long')) return false;
+    return true;
+  };
+
+  for (const s of sorted) {
+    let day = null;
+    if (s.kind === 'brick') {
+      // Koppellauf direkt nach der längsten Radeinheit
+      const bikes = placed.filter((x) => x.sport === 'bike').sort((a, b) => b.minutes - a.minutes);
+      day = bikes.length ? bikes[0]._day : null;
+      if (day === null) continue;
+    }
+    if (day === null) {
+      const key = s.kind === 'strength' ? 'strength' : `${s.kind === 'brick' ? 'quality' : s.kind}_${s.sport}`;
+      const prefs = PREFERRED_DAYS[key] || PREFERRED_DAYS[`easy_${s.sport}`] || [0, 1, 2, 3, 4, 5, 6];
+      day = prefs.find((d) => ok(s, d, true));
+      if (day === undefined) day = prefs.find((d) => ok(s, d, false));
+      if (day === undefined) day = null;
+    }
+    if (day === null) continue; // passt nicht mehr in die (Rest-)Woche
+    s._day = day;
+    byDay.get(day).push(s);
+    placed.push(s);
+  }
+  return placed.sort((a, b) => a._day - b._day || rank[a.kind] - rank[b.kind]);
+}
+
+// ---------------------------------------------------------------------------
+// Woche planen
+// ---------------------------------------------------------------------------
+
+function buildWeek(store, weekStartKey, firstDay, opts = {}) {
+  const now = opts.now || new Date();
+  const athlete = store.athlete;
+  const goal = getGoal(athlete);
+  const weekIndex = (store.plan.weekIndex || 0) + (opts.newWeek ? 1 : 0);
+  let phase = phaseFor(goal, weekStartKey, weekIndex, athlete.deloadEveryNWeeks);
+  // Keine Entlastungswoche als allererste geplante Woche
+  if (phase.key === 'recovery' && !(store.plan.lastDecision && store.plan.lastDecision.baseMinutes)) {
+    phase = Object.assign({}, phase, PHASES.base, { key: 'base' });
+  }
+  const report = analysis.buildAnalysisReport(store.activities, athlete);
+  const rec = recovery.computeRecovery(store.health, now);
+  const ctx = { now, acwr: report.acwr.acwr, recoveryStatus: rec ? rec.status : null, completionRate: opts.completionRate ?? null };
+
+  const vol = opts.volume || computeWeekVolume(store, goal, phase, ctx);
+  const freeDays = [0, 1, 2, 3, 4, 5, 6].filter((d) => !goal.restDays.includes(d));
+  const remainingDays = freeDays.filter((d) => d >= firstDay).length;
+  const scale = freeDays.length ? remainingDays / freeDays.length : 1;
+  const enduranceMinutes = Math.round(vol.enduranceMinutes * scale);
+
+  const raceGoal = Object.assign({}, goal);
+  const weekStart = new Date(weekStartKey + 'T00:00:00Z');
+  let raceDay = null;
+  if (phase.key === 'race' && goal.date) {
+    raceDay = Math.round((new Date(goal.date + 'T00:00:00Z') - weekStart) / DAY_MS);
+    // Tag vor dem Wettkampf frei halten, Wettkampftag selbst nur für den Wettkampf
+    raceGoal.restDays = [...new Set([...goal.restDays, raceDay, raceDay - 1].filter((d) => d >= 0 && d <= 6))];
+  }
+  let composed = composeSessions(goal, phase, enduranceMinutes, weekIndex);
+  // Angefangene Woche: Krafteinheiten anteilig
+  if (scale < 1) {
+    let allowed = Math.round(composed.filter((c) => c.sport === 'strength').length * scale);
+    composed = composed.filter((c) => c.sport !== 'strength' || allowed-- > 0);
+  }
+  // Bereits erledigte Einheiten dieser Woche (beim Neuplanen) anrechnen
+  if (opts.kept && opts.kept.length) {
+    const keptStrength = opts.kept.filter((k) => k.sport === 'WeightTraining').length;
+    let dropStrength = keptStrength;
+    composed = composed.filter((c) => !(c.sport === 'strength' && dropStrength-- > 0));
+    let keptQuality = opts.kept.filter((k) => k.kind === 'quality' || k.intensity === 'hard').length;
+    for (const c of composed) if (keptQuality > 0 && c.kind === 'quality') { c.kind = 'easy'; c.intensity = 'easy'; keptQuality--; }
+  }
+  const placed = placeSessions(composed, raceGoal, firstDay);
+  if (raceDay !== null && raceDay >= firstDay && raceDay <= 6) {
+    placed.push({ sport: 'race', kind: 'race', intensity: 'hard', minutes: { sprint: 80, olympic: 150, half: 330, full: 720 }[goal.distance] || 150, _day: raceDay });
+  }
+
+  const sessions = placed.map((s, i) => {
+    const day = new Date(weekStart.getTime() + s._day * DAY_MS).toISOString().slice(0, 10);
+    const type = s.sport === 'race' ? 'Triathlon' : GROUP_TYPE[s.sport];
+    if (s.sport === 'race') {
+      return {
+        id: `race_${day}`, day, weekday: WEEKDAYS[s._day], sport: type, kind: 'race', intensity: 'hard',
+        targetDurationMin: s.minutes, targetLoad: round1(s.minutes * 9),
+        description: `${goal.name || 'Wettkampf'} – ${DISTANCES[goal.distance].label}. Viel Erfolg!`,
+        status: 'planned', matchedActivityId: null
+      };
+    }
     return {
-      id: `s_${day.toISOString().slice(0, 10)}_${i}`,
-      day: day.toISOString().slice(0, 10),
-      weekday: WEEKDAYS[dayOffsets[i]],
-      sport,
-      intensity,
-      targetDurationMin,
-      targetLoad,
-      description: describeSession(sport, intensity),
+      id: `s_${day}_${s.sport}_${i}_${Date.now().toString(36)}`,
+      day,
+      weekday: WEEKDAYS[s._day],
+      sport: type,
+      kind: s.kind,
+      variant: s.variant || null,
+      intensity: s.intensity,
+      targetDurationMin: s.minutes,
+      targetLoad: round1(s.minutes * getIntensityFactor(type, s.intensity)),
+      description: describeSession(type, s.intensity),
       status: 'planned',
       matchedActivityId: null
     };
   });
 
-  return sessions.sort((a, b) => (a.day < b.day ? -1 : 1));
-}
-
-function pickDayOffsets(count) {
-  // 0=Mo .. 6=So. Bevorzugte Reihenfolge sorgt für Verteilung mit Ruhetagen dazwischen.
-  const preferred = [1, 3, 5, 0, 4, 6, 2]; // Di, Do, Sa, Mo, Fr, So, Mi
-  return preferred.slice(0, count).sort((a, b) => a - b);
-}
-
-// Hauptfunktion: schließt die laufende Woche ab (falls vorhanden) und generiert
-// den Plan für die kommende Woche. Mutiert store.plan direkt.
-function generateNextWeekPlan(store) {
-  const evalResult = evaluatePreviousWeek(store);
-  if (evalResult) {
-    store.plan.history.unshift({
-      weekStart: evalResult.weekStart,
-      sessions: evalResult.sessions,
-      completionRate: evalResult.completionRate,
-      summary: evalResult.summary
-    });
-    store.plan.history = store.plan.history.slice(0, 26); // max. ~6 Monate Historie behalten
-  }
-
-  const report = analysis.buildAnalysisReport(store.activities, store.athlete);
-  const weekIndex = store.plan.weekIndex + 1;
-  const isDeload = weekIndex % (store.athlete.deloadEveryNWeeks || 4) === 0;
-  const completionRate = evalResult ? evalResult.completionRate : null;
-
-  const baseLoad = computeBaseTargetLoad(store, evalResult ? evalResult.summary : report.lastWeek);
-  const { multiplier, reason } = decideMultiplierAndReason(store, weekIndex, report.acwr, completionRate);
-  const targetTotalLoad = round1(baseLoad * multiplier);
-
-  const today = new Date();
-  const nextWeekStart = new Date(analysis.startOfWeek(today).getTime() + 7 * DAY_MS);
-  const sessions = buildSessions(nextWeekStart, targetTotalLoad, report.sportFrequency, isDeload);
-
-  store.plan.currentWeekStart = nextWeekStart.toISOString().slice(0, 10);
-  store.plan.weekIndex = weekIndex;
-  store.plan.sessions = sessions;
-  store.plan.lastDecision = {
-    generatedAt: new Date().toISOString(),
-    baseLoad: round1(baseLoad),
-    multiplier,
-    targetTotalLoad,
-    isDeload,
-    reason,
+  const weeksText = phase.weeksTo !== null && phase.weeksTo > 0
+    ? ` · noch ${phase.weeksTo} ${phase.weeksTo === 1 ? 'Woche' : 'Wochen'} bis ${goal.name || DISTANCES[goal.distance].label}`
+    : '';
+  const decision = {
+    generatedAt: now.toISOString(),
+    phase: phase.key,
+    phaseLabel: phase.label,
+    phaseText: phase.text,
+    weeksToRace: phase.weeksTo,
+    goalName: goal.name || null,
+    distance: goal.distance,
+    baseMinutes: vol.baseMinutes,
+    targetMinutes: enduranceMinutes + sessions.filter((s) => s.sport === 'WeightTraining').reduce((a, s) => a + s.targetDurationMin, 0),
+    plannedMinutes: sessions.reduce((a, s) => a + s.targetDurationMin, 0),
+    isDeload: ['recovery', 'taper', 'race', 'post'].includes(phase.key),
+    reason: `${phase.label}${weeksText}. ${vol.reasons.join(' · ')}.`,
     acwr: report.acwr,
-    completionRate,
-    recovery: recovery.computeRecovery(store.health)
+    completionRate: ctx.completionRate,
+    partialWeek: firstDay > 0
   };
+  return { sessions, decision, weekIndex, volume: vol };
+}
 
-  return store.plan;
+function todayIndex(weekStartKey, now) {
+  const todayKey = recovery.dayKey(now);
+  return Math.max(0, Math.min(6, Math.round((new Date(todayKey + 'T00:00:00Z') - new Date(weekStartKey + 'T00:00:00Z')) / DAY_MS)));
+}
+
+// Sorgt dafür, dass immer ein Plan für die laufende Woche existiert. Zu
+// Wochenbeginn wird die Vorwoche ausgewertet (→ Historie) und neu geplant.
+// Gibt true zurück, wenn sich der Plan geändert hat.
+function ensureCurrentPlan(store, now = new Date()) {
+  const thisMonday = analysis.startOfWeek(now).toISOString().slice(0, 10);
+  const plan = store.plan;
+  if (plan.currentWeekStart === thisMonday && plan.version === 2) return false;
+
+  let completionRate = null;
+  if (plan.currentWeekStart && plan.currentWeekStart < thisMonday && plan.sessions.length) {
+    const evalResult = evaluatePreviousWeek(store);
+    if (evalResult) {
+      plan.history.unshift(evalResult);
+      plan.history = plan.history.slice(0, 26);
+      completionRate = evalResult.completionRate;
+    }
+  }
+  // Alter (v1-)Plan oder Plan für eine zukünftige Woche: Steigerungsbasis neu bestimmen
+  if (plan.version !== 2) plan.lastDecision = null;
+
+  const firstDay = todayIndex(thisMonday, now);
+  const isNewWeek = plan.currentWeekStart !== thisMonday;
+  const week = buildWeek(store, thisMonday, firstDay, { now, completionRate, newWeek: isNewWeek && plan.version === 2 });
+  plan.currentWeekStart = thisMonday;
+  plan.weekIndex = week.weekIndex;
+  plan.sessions = week.sessions;
+  plan.lastDecision = week.decision;
+  plan.version = 2;
+  return true;
+}
+
+// "Neu planen": erledigte/vergangene Einheiten bleiben, ab heute wird neu verteilt.
+function replanCurrentWeek(store, now = new Date()) {
+  if (ensureCurrentPlan(store, now)) return store.plan;
+  const plan = store.plan;
+  const todayKey = recovery.dayKey(now);
+  const keep = plan.sessions.filter((s) => s.day < todayKey || s.status !== 'planned');
+  const firstDay = todayIndex(plan.currentWeekStart, now);
+  // gleicher Grundumfang wie bisher in dieser Woche (keine erneute Steigerung)
+  const prevBase = plan.lastDecision && plan.lastDecision.baseMinutes;
+  const goal = getGoal(store.athlete);
+  const phase = phaseFor(goal, plan.currentWeekStart, plan.weekIndex || 0, store.athlete.deloadEveryNWeeks);
+  const volume = prevBase
+    ? { baseMinutes: prevBase, enduranceMinutes: Math.round(Math.min(prevBase, goal.weeklyHours * 60) * phase.volume), reasons: ['Woche neu verteilt'] }
+    : null;
+  const week = buildWeek(store, plan.currentWeekStart, firstDay, { now, volume: volume || undefined, kept: keep });
+  const keptDays = new Set(keep.filter((s) => s.day === todayKey).map((s) => s.sport));
+  plan.sessions = [...keep, ...week.sessions.filter((s) => !(s.day === todayKey && keptDays.has(s.sport)))]
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+  plan.lastDecision = Object.assign(week.decision, { baseMinutes: prevBase || week.decision.baseMinutes });
+  return plan;
+}
+
+// ---------------------------------------------------------------------------
+// Auswertung der Vorwoche
+// ---------------------------------------------------------------------------
+
+// Einheit gilt als erledigt, wenn am selben Tag (±1 Tag) ein Training derselben
+// Sportart-Gruppe importiert wurde (Rad = Rad oder Indoor-Rad usw.).
+function evaluatePreviousWeek(store) {
+  const { plan, activities, athlete } = store;
+  if (!plan.currentWeekStart || plan.sessions.length === 0) return null;
+  const weekStart = new Date(plan.currentWeekStart + 'T00:00:00Z');
+  const used = new Set();
+  const evaluated = plan.sessions.map((session) => {
+    if (session.manualOverride) return session;
+    if (session.status !== 'planned') return session;
+    if (session.kind === 'race') return { ...session, status: 'done' };
+    const sessionDate = new Date(session.day + 'T00:00:00Z');
+    const match = activities.find((act) => {
+      if (used.has(act.id)) return false;
+      const actDate = new Date(analysis.dayKeyOf(new Date(act.startDate)) + 'T00:00:00Z');
+      const diffDays = Math.abs((actDate.getTime() - sessionDate.getTime()) / DAY_MS);
+      return diffDays <= 1 && groupOf(act.type) === groupOf(session.sport);
+    });
+    if (match) used.add(match.id);
+    return { ...session, status: match ? 'done' : 'missed', matchedActivityId: match ? match.id : null };
+  });
+  const doneCount = evaluated.filter((s) => s.status === 'done').length;
+  const completionRate = evaluated.length > 0 ? doneCount / evaluated.length : 1;
+  const summary = analysis.computeWeeklySummary(activities, athlete, weekStart);
+  return { weekStart: plan.currentWeekStart, sessions: evaluated, completionRate: round1(completionRate * 100), summary, phase: plan.lastDecision ? plan.lastDecision.phase : null };
+}
+
+// Laufende Woche: Status "erledigt" automatisch setzen, sobald das passende
+// Training importiert ist (nur für vergangene/heutige Einheiten, ohne manuellen Status).
+function autoMarkDone(store, now = new Date()) {
+  const plan = store.plan;
+  if (!plan.sessions || !plan.sessions.length) return false;
+  const todayKey = recovery.dayKey(now);
+  const usedIds = new Set(plan.sessions.map((s) => s.matchedActivityId).filter(Boolean));
+  let changed = false;
+  for (const s of plan.sessions) {
+    if (s.status !== 'planned' || s.manualOverride || s.day > todayKey) continue;
+    const match = store.activities.find((a) => !usedIds.has(a.id)
+      && analysis.dayKeyOf(new Date(a.startDate)) === s.day
+      && groupOf(a.type) === groupOf(s.sport)
+      && (a.movingTimeSec || 0) >= Math.min(15, s.targetDurationMin * 0.4) * 60);
+    if (match) {
+      s.status = 'done';
+      s.matchedActivityId = match.id;
+      usedIds.add(match.id);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// Ablauf, Code und Zielpulse für die Anzeige (nicht gespeichert, damit sich
+// Änderungen an Max-/Ruhepuls sofort auswirken)
+function decorateSessions(store) {
+  const athlete = store.athlete;
+  const ctxBase = { athlete, swimPace: workouts.swimPace(store.activities || []) };
+  const lib = store.workoutLibrary || {};
+  return (store.plan.sessions || []).map((s) => {
+    const g = groupOf(s.sport);
+    if (!['swim', 'bike', 'run', 'strength'].includes(g)) return s;
+    const ctx = Object.assign({}, ctxBase, { strengthCount: s.variant === 'B' ? 1 : 0 });
+    const w = workouts.buildWorkout(g, s.intensity, s.targetDurationMin, ctx);
+    let title = w.title;
+    if (s.kind === 'long') title = g === 'bike' ? 'Lange Ausfahrt' : g === 'run' ? 'Langer Lauf' : title;
+    if (s.kind === 'brick') title = 'Koppellauf';
+    const code = workouts.workoutCode(g, s.intensity, s.targetDurationMin, w);
+    const steps = w.steps.filter(Boolean);
+    if (s.kind === 'brick') {
+      steps.unshift({ label: 'direkt', text: 'unmittelbar nach dem Rad loslaufen – Schuhe wechseln, keine Pause. Die ersten Minuten fühlen sich schwer an, das ist normal und genau der Trainingsreiz.', hr: null, zone: null });
+    }
+    const main = steps.filter((x) => x.hr).sort((a, b) => b.hr - a.hr)[0];
+    return Object.assign({}, s, {
+      workout: {
+        title, code, device: g === 'strength' ? 'technogym' : 'watch', created: !!lib[code],
+        distance: w.distance || null, steps, mainHr: main ? main.hr : null
+      }
+    });
+  });
+}
+
+// Für Abwärtskompatibilität (alter Button "Neue Woche planen")
+function generateNextWeekPlan(store) {
+  return replanCurrentWeek(store);
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +611,7 @@ function generateNextWeekPlan(store) {
 function suggestAdjustment(store, rec, todayKey) {
   if (!rec || !store.plan || !Array.isArray(store.plan.sessions)) return null;
   const session = store.plan.sessions.find(
-    (s) => s.day === todayKey && s.status === 'planned' && !s.adjusted && s.intensity !== 'easy'
+    (s) => s.day === todayKey && s.status === 'planned' && !s.adjusted && s.intensity !== 'easy' && s.kind !== 'race'
   );
   if (!session) return null;
   const shortNight = rec.lastNight && rec.lastNight.total < 6;
@@ -347,4 +665,7 @@ function adjustSession(store, sessionId, action, reason) {
   return { error: 'Unbekannte Aktion.' };
 }
 
-module.exports = { generateNextWeekPlan, evaluatePreviousWeek, suggestAdjustment, adjustSession };
+module.exports = {
+  generateNextWeekPlan, ensureCurrentPlan, replanCurrentWeek, evaluatePreviousWeek, autoMarkDone,
+  decorateSessions, suggestAdjustment, adjustSession, getGoal, phaseFor, DISTANCES, PHASES
+};

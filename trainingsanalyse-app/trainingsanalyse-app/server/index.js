@@ -194,10 +194,10 @@ function matchRoute(method, pathname) {
 route('GET', '/api/state', async (req, res) => {
   const s = await loadStore();
   const hrChanges = athleteHr.updateAutoHR(s);
-  if (Object.keys(hrChanges).length) {
-    console.log('[puls] automatisch aktualisiert:', JSON.stringify(hrChanges));
-    await saveStore(s);
-  }
+  if (Object.keys(hrChanges).length) console.log('[puls] automatisch aktualisiert:', JSON.stringify(hrChanges));
+  const planChanged = planner.ensureCurrentPlan(s);
+  const marked = planner.autoMarkDone(s);
+  if (Object.keys(hrChanges).length || planChanged || marked) await saveStore(s);
   const report = analysis.buildAnalysisReport(s.activities, s.athlete);
   const rec = recovery.computeRecovery(s.health);
   if (rec && rec.status === 'eingeschränkt') {
@@ -225,7 +225,8 @@ route('GET', '/api/state', async (req, res) => {
     sleepSeries: recovery.sleepSeries(s.health, 28),
     workoutLibrary: s.workoutLibrary || {},
     healthMetrics: { lastImportAt: (s.health && s.health.lastImportAt) || null },
-    plan: s.plan,
+    plan: Object.assign({}, s.plan, { sessions: planner.decorateSessions(s), history: (s.plan.history || []).slice(0, 8) }),
+    goal: planner.getGoal(s.athlete),
     analysis: report
   });
 });
@@ -500,6 +501,7 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
 
   // Schlaf / HRV / Ruhepuls (zweite Automation mit Datentyp "Gesundheitsmetriken")
   const metricCounts = recovery.mergeHealthMetrics(s, body);
+  const planMarked = result.imported.length > 0 ? planner.autoMarkDone(s) : false;
   const hrChanges = athleteHr.updateAutoHR(s);
   if (Object.keys(hrChanges).length) console.log('[puls] automatisch aktualisiert:', JSON.stringify(hrChanges));
   const metricsMerged = metricCounts.sleep + metricCounts.hrv + metricCounts.restingHR > 0 || !!metricCounts.payloadOnly;
@@ -516,7 +518,7 @@ route('POST', '/api/import/health-auto-export', async (req, res, urlObj) => {
     console.log(`[dedupe] ${deduped.length} doppelte/zu kurze Einträge beim Import entfernt.`);
   }
 
-  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0 || metricsMerged || Object.keys(hrChanges).length > 0) {
+  if (result.imported.length > 0 || Object.keys(athleteDefaults).length > 0 || metricsMerged || Object.keys(hrChanges).length > 0 || planMarked) {
     await saveStore(s);
   }
 
@@ -583,8 +585,25 @@ route('POST', '/api/settings', async (req, res) => {
     }
   }
   athleteHr.updateAutoHR(s, { force: true });
+
+  // Saisonziel
+  let replanned = false;
+  if (body.goal && typeof body.goal === 'object') {
+    const g = body.goal;
+    const date = typeof g.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(g.date) ? g.date : null;
+    s.athlete.goal = {
+      name: String(g.name || '').slice(0, 60),
+      date,
+      distance: ['sprint', 'olympic', 'half', 'full', 'none'].includes(g.distance) ? g.distance : 'olympic',
+      weeklyHours: Math.min(25, Math.max(2, Number(g.weeklyHours) || 6)),
+      strengthPerWeek: Math.min(3, Math.max(0, Math.round(Number(g.strengthPerWeek) || 0))),
+      restDays: Array.isArray(g.restDays) ? [...new Set(g.restDays.map(Number).filter((d) => d >= 0 && d <= 6))].slice(0, 3) : [0]
+    };
+    planner.replanCurrentWeek(s);
+    replanned = true;
+  }
   await saveStore(s);
-  sendJson(res, 200, { athlete: s.athlete });
+  sendJson(res, 200, { athlete: s.athlete, replanned });
 });
 
 route('GET', '/auth/strava', async (req, res) => {
@@ -652,7 +671,7 @@ route('POST', '/api/sync', async (req, res) => {
 
 route('POST', '/api/plan/regenerate', async (req, res) => {
   const s = await loadStore();
-  const plan = planner.generateNextWeekPlan(s);
+  const plan = planner.replanCurrentWeek(s);
   await saveStore(s);
   sendJson(res, 200, { plan });
 });
