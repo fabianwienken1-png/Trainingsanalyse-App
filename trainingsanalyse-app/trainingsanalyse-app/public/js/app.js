@@ -475,7 +475,7 @@ function infoContent(key) {
       return {
         title: 'Formstatus',
         paras: [
-          'Fitness ist deine Trainingslast der letzten ~6 Wochen (gleitender Schnitt, neuere Tage zählen mehr). Ermüdung ist dasselbe für die letzten ~7 Tage. Form = Fitness − Ermüdung, angegeben in % der Fitness.',
+          'Fitness ist deine Trainingslast der letzten ~6 Wochen (gleitender Schnitt, neuere Tage zählen mehr). Ermüdung ist dasselbe für die letzten ~7 Tage. Form = Fitness − Ermüdung, angegeben in % der Fitness und über 3 Tage gemittelt, damit ein einzelner langer Trainingstag den Wert nicht springen lässt.',
           'Unter −30: überlastet, Verletzungs- und Infektrisiko steigen. −30 bis −10: produktiver Aufbau. −10 bis +5: ausgeglichen. +5 bis +25: frisch – ideal für Wettkämpfe. Darüber: sehr frisch, auf Dauer geht Fitness verloren.',
           'Der Plan nutzt diesen Wert: unter −20 % wird der Umfang gehalten, unter −30 % reduziert. Das frühere Belastungsverhältnis (ACWR) steht nur noch als Zusatzinfo dabei – es gilt inzwischen als wenig aussagekräftig für Verletzungen.'
         ],
@@ -1574,8 +1574,8 @@ function renderAnalysis() {
 const SYNC_STALE_DAYS = 3;
 
 function openSettings(section) {
+  if (section === 'goal') { location.hash = '#ziel'; return; }
   document.getElementById('settings-dialog').showModal();
-  if (section === 'goal') setTimeout(() => document.getElementById('goal-section').scrollIntoView({ block: 'start' }), 50);
   if (section === 'perf') setTimeout(() => document.getElementById('perf-section').scrollIntoView({ block: 'start' }), 50);
 }
 
@@ -1645,6 +1645,37 @@ function setupPerfForm() {
   });
 }
 
+// Kopf des Ziel-Tabs: Countdown und aktuelle Phase
+function renderGoalSummary() {
+  const g = currentState.goal || {};
+  const d = (currentState.plan && currentState.plan.lastDecision) || {};
+  const distSel = document.getElementById('goal-distance');
+  const opt = distSel ? [...distSel.options].find((o) => o.value === g.distance) : null;
+  const distLabel = opt ? opt.textContent.replace(/\s*\(.*\)$/, '') : '';
+  if (!g.date || g.distance === 'none') {
+    document.getElementById('goal-eyebrow').textContent = 'Saisonziel & Trainingszeit';
+    mount('goal-summary', el('div', { class: 'card' }, [
+      el('div', { class: 'card-head', style: 'margin:0 0 6px' }, [el('h2', {}, 'Kein Wettkampf eingetragen')]),
+      el('div', { class: 'muted small' }, 'Ohne Wettkampf trainierst du in der Grundlage mit regelmäßigen Entlastungswochen. Trag unten einen Wettkampf ein, dann plant die App die Phasen bis dorthin.')
+    ]));
+    return;
+  }
+  const days = Math.round((new Date(g.date + 'T12:00:00') - new Date(localKey(new Date()) + 'T12:00:00')) / 86400000);
+  document.getElementById('goal-eyebrow').textContent = days >= 0 ? `noch ${days} ${days === 1 ? 'Tag' : 'Tage'}` : 'Wettkampf vorbei';
+  mount('goal-summary', el('div', { class: 'card' }, [
+    el('div', { class: 'card-head', style: 'margin:0 0 10px' }, [
+      el('div', { class: 'head-with-info' }, [el('span', { 'aria-hidden': 'true', style: 'color:#f5b544', html: FLAG_ICON }), el('h2', {}, g.name || distLabel || 'Wettkampf')]),
+      d.phaseLabel ? el('span', { class: `chip ${PHASE_CHIP[d.phase] || 'solid-muted'}` }, d.phaseLabel) : null
+    ]),
+    el('div', { class: 'plan-stats' }, [
+      el('div', {}, [el('div', { class: 'label' }, 'Datum'), el('div', { class: 'value' }, new Date(g.date + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric', year: '2-digit' }))]),
+      el('div', {}, [el('div', { class: 'label' }, 'Wochen'), el('div', { class: 'value' }, days >= 0 ? String(Math.ceil(days / 7)) : '–')])
+    ]),
+    el('div', { class: 'muted small', style: 'margin-top:8px' }, [distLabel, `${g.weeklyHours} h pro Woche`].filter(Boolean).join(' · ')),
+    d.phaseText ? el('div', { class: 'plan-reason' }, d.phaseText) : null
+  ]));
+}
+
 // Saisonziel-Formular
 let goalRestDays = [0];
 function renderGoalForm() {
@@ -1712,6 +1743,7 @@ function setupGoalForm() {
 function renderSettings() {
   renderLibrary();
   renderGoalForm();
+  renderGoalSummary();
   renderPerfForm();
   const a = currentState.athlete;
   const form = document.getElementById('settings-form');
@@ -1943,7 +1975,7 @@ function numOrNull(v) {
 // Navigation
 // ---------------------------------------------------------------------------
 
-const VIEWS = ['heute', 'plan', 'aktivitaeten', 'analyse'];
+const VIEWS = ['heute', 'plan', 'ziel', 'aktivitaeten', 'analyse'];
 let activeView = 'heute';
 
 function showView() {

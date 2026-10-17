@@ -81,6 +81,75 @@
     </div>
   </section>
 
+  <!-- ============ ZIEL ============ -->
+  <section class="view" id="view-ziel" data-view="ziel" hidden>
+    <header class="view-header">
+      <div>
+        <div class="eyebrow" id="goal-eyebrow">Saisonziel &amp; Trainingszeit</div>
+        <h1>Ziel</h1>
+      </div>
+    </header>
+    <div class="view-body" id="goal-section">
+      <div id="goal-summary"></div>
+      <form id="goal-form" class="card form-card">
+        <div class="form-row">
+          <label for="goal-name">Wettkampf (Name, optional)</label>
+          <input id="goal-name" type="text" maxlength="60" placeholder="z.B. Triathlon Ingolstadt" />
+        </div>
+        <div class="form-row">
+          <label for="goal-date">Datum</label>
+          <input id="goal-date" type="date" />
+        </div>
+        <div class="form-row">
+          <label for="goal-distance">Distanz</label>
+          <select id="goal-distance">
+            <optgroup label="Triathlon">
+                  <option value="sprint">Sprintdistanz (0,75 / 20 / 5 km)</option>
+            <option value="olympic">Olympische Distanz (1,5 / 40 / 10 km)</option>
+            <option value="half">Mitteldistanz (1,9 / 90 / 21 km)</option>
+            <option value="full">Langdistanz (3,8 / 180 / 42 km)</option>
+                </optgroup>
+                <optgroup label="Laufen">
+                  <option value="run10k">10-km-Lauf</option>
+                  <option value="runHalf">Halbmarathon (21,1 km)</option>
+                  <option value="marathon">Marathon (42,2 km)</option>
+                </optgroup>
+            <option value="none">Kein Wettkampf – Form aufbauen</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="goal-hours">Verfügbare Trainingszeit pro Woche (Stunden)</label>
+          <input id="goal-hours" type="number" inputmode="decimal" min="2" max="25" step="0.5" />
+        </div>
+        <div class="form-row">
+          <label for="goal-strength">Krafteinheiten pro Woche</label>
+          <select id="goal-strength">
+            <option value="0">keine</option>
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="goal-mobility">Dehnen &amp; Mobilität pro Woche</label>
+          <select id="goal-mobility">
+            <option value="0">keine</option>
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+            <option value="4">4×</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <span class="label-like" id="rest-label">Feste Ruhetage</span>
+          <div class="chip-row wrap" id="goal-restdays" role="group" aria-labelledby="rest-label"></div>
+        </div>
+        <p class="muted small" style="margin:0">Der Plan baut darauf auf: Phasen bis zum Wettkampf (Grundlage → Aufbau → Vorbereitung → Tapering), Einheiten-Mix passend zur Distanz und Steigerung um max. 10 % pro Woche. Speichern plant die laufende Woche neu.</p>
+        <button type="submit" class="primary-btn">Speichern &amp; Woche neu planen</button>
+      </form>
+    </div>
+  </section>
+
   <!-- ============ AKTIVITÄTEN ============ -->
   <section class="view" id="view-aktivitaeten" data-view="aktivitaeten" hidden>
     <header class="view-header">
@@ -147,6 +216,10 @@
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
     Plan
   </a>
+  <a href="#ziel" data-tab="ziel">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>
+    Ziel
+  </a>
   <a href="#aktivitaeten" data-tab="aktivitaeten">
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
     Aktivitäten
@@ -165,63 +238,7 @@
   </div>
   <div class="sheet-body">
 
-    <h3 class="section-title" id="goal-section">Saisonziel &amp; Trainingszeit</h3>
-    <form id="goal-form" class="card form-card">
-      <div class="form-row">
-        <label for="goal-name">Wettkampf (Name, optional)</label>
-        <input id="goal-name" type="text" maxlength="60" placeholder="z.B. Triathlon Ingolstadt" />
-      </div>
-      <div class="form-row">
-        <label for="goal-date">Datum</label>
-        <input id="goal-date" type="date" />
-      </div>
-      <div class="form-row">
-        <label for="goal-distance">Distanz</label>
-        <select id="goal-distance">
-          <optgroup label="Triathlon">
-                <option value="sprint">Sprintdistanz (0,75 / 20 / 5 km)</option>
-          <option value="olympic">Olympische Distanz (1,5 / 40 / 10 km)</option>
-          <option value="half">Mitteldistanz (1,9 / 90 / 21 km)</option>
-          <option value="full">Langdistanz (3,8 / 180 / 42 km)</option>
-              </optgroup>
-              <optgroup label="Laufen">
-                <option value="run10k">10-km-Lauf</option>
-                <option value="runHalf">Halbmarathon (21,1 km)</option>
-                <option value="marathon">Marathon (42,2 km)</option>
-              </optgroup>
-          <option value="none">Kein Wettkampf – Form aufbauen</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <label for="goal-hours">Verfügbare Trainingszeit pro Woche (Stunden)</label>
-        <input id="goal-hours" type="number" inputmode="decimal" min="2" max="25" step="0.5" />
-      </div>
-      <div class="form-row">
-        <label for="goal-strength">Krafteinheiten pro Woche</label>
-        <select id="goal-strength">
-          <option value="0">keine</option>
-          <option value="1">1×</option>
-          <option value="2">2×</option>
-          <option value="3">3×</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <label for="goal-mobility">Dehnen &amp; Mobilität pro Woche</label>
-        <select id="goal-mobility">
-          <option value="0">keine</option>
-          <option value="1">1×</option>
-          <option value="2">2×</option>
-          <option value="3">3×</option>
-          <option value="4">4×</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <span class="label-like" id="rest-label">Feste Ruhetage</span>
-        <div class="chip-row wrap" id="goal-restdays" role="group" aria-labelledby="rest-label"></div>
-      </div>
-      <p class="muted small" style="margin:0">Der Plan baut darauf auf: Phasen bis zum Wettkampf (Grundlage → Aufbau → Vorbereitung → Tapering), Triathlon-Mix nach Distanz und Steigerung um max. 10 % pro Woche. Speichern plant die laufende Woche neu.</p>
-      <button type="submit" class="primary-btn">Speichern &amp; Woche neu planen</button>
-    </form>
+
 
     <h3 class="section-title" id="perf-section">Leistung</h3>
     <form id="perf-form" class="card form-card">

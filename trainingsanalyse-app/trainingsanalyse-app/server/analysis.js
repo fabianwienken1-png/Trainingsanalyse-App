@@ -244,7 +244,12 @@ function computeFitness(dailyLoadSeries, now = new Date(), historyDays = 0) {
     series.push({ date: key, ctl: Math.round(ctl * 10) / 10, atl: Math.round(atl * 10) / 10, tsb: Math.round((prev.ctl - prev.atl) * 10) / 10 });
   }
   const tsb = prev.ctl - prev.atl; // Form heute = Stand nach gestern
-  const formPct = ctl > 1 ? (tsb / prev.ctl) * 100 : null;
+  // Form in % als Ø der letzten 3 Tage: bei wenigen, längeren Einheiten springt
+  // die Ermüdung nach jedem Trainingstag stark – der Ø glättet diese Zacken.
+  const recent = series.slice(-3).filter((p) => p.ctl > 1);
+  const formPct = ctl > 1 && recent.length
+    ? recent.reduce((sum, p) => sum + p.tsb / p.ctl, 0) / recent.length * 100
+    : null;
   const reliable = historyDays >= 42;
   let state = 'unbekannt';
   if (formPct !== null && historyDays >= 21) {
