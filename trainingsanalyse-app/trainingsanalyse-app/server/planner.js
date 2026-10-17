@@ -70,6 +70,7 @@ const DISTANCES = {
   half: { label: 'Mitteldistanz', share: { swim: 0.18, bike: 0.5, run: 0.32 }, brick: 30 },
   full: { label: 'Langdistanz', share: { swim: 0.16, bike: 0.52, run: 0.32 }, brick: 30 },
   // Laufwettkämpfe: Laufen im Mittelpunkt, Rad/Schwimmen nur als lockeres Ausgleichstraining
+  run5k: { label: '5-km-Lauf', type: 'run', share: { swim: 0.1, bike: 0.2, run: 0.7 }, brick: 0, taperWeeks: 1, longCap: 75, raceMin: 25 },
   run10k: { label: '10-km-Lauf', type: 'run', share: { swim: 0.1, bike: 0.2, run: 0.7 }, brick: 0, taperWeeks: 1, longCap: 90, raceMin: 55 },
   runHalf: { label: 'Halbmarathon', type: 'run', share: { swim: 0.08, bike: 0.17, run: 0.75 }, brick: 0, taperWeeks: 2, longCap: 120, raceMin: 120 },
   marathon: { label: 'Marathon', type: 'run', share: { swim: 0.05, bike: 0.15, run: 0.8 }, brick: 0, taperWeeks: 3, longCap: 150, raceMin: 240 },
@@ -78,8 +79,51 @@ const DISTANCES = {
 
 const DEFAULT_GOAL = { name: '', date: null, distance: 'olympic', weeklyHours: 6, strengthPerWeek: 2, mobilityPerWeek: 2, restDays: [0] };
 
-function getGoal(athlete) {
+// ---------------------------------------------------------------------------
+// Wettkämpfe (A/B/C) und Abwesenheiten
+// ---------------------------------------------------------------------------
+// A = Saisonhöhepunkt: bestimmt die Periodisierung (Phasen, volles Tapering).
+// B = wichtiger Wettkampf: Mini-Tapering (Woche −20 %, Vortag frei), Folgetag frei.
+// C = Trainingswettkampf: ersetzt die fordernde Einheit, kein Tapering.
+const RACE_TIME_FALLBACK = { sprint: 80, olympic: 150, half: 330, full: 720 };
+
+function getRaces(athlete) {
+  return (Array.isArray(athlete.races) ? athlete.races : [])
+    .filter((r) => r && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && DISTANCES[r.distance] && r.distance !== 'none')
+    .map((r) => Object.assign({ priority: 'A' }, r))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+function addDaysKey(key, n) {
+  const d = new Date(key + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Hauptwettkampf: nächster A-Wettkampf (inkl. der Woche danach für die Regeneration)
+function mainRace(athlete, refKey) {
+  const from = addDaysKey(refKey, -7);
+  return getRaces(athlete).find((r) => r.priority === 'A' && r.date >= from) || null;
+}
+
+function raceMinutes(distance) {
+  return DISTANCES[distance].raceMin || RACE_TIME_FALLBACK[distance] || 150;
+}
+
+function isAbsent(athlete, dayKey) {
+  return (athlete.absences || []).some((a) => a.from <= dayKey && dayKey <= a.to);
+}
+
+function getGoal(athlete, refKey) {
   const g = Object.assign({}, DEFAULT_GOAL, athlete.goal || {});
+  if (Array.isArray(athlete.races)) {
+    const m = mainRace(athlete, refKey || recovery.dayKey(new Date()));
+    g.name = m ? m.name || '' : '';
+    g.date = m ? m.date : null;
+    g.distance = m ? m.distance : 'none';
+    g.targetTimeSec = m ? m.targetTimeSec || null : null;
+    g.raceId = m ? m.id : null;
+  }
   if (!DISTANCES[g.distance]) g.distance = 'olympic';
   g.weeklyHours = Math.min(25, Math.max(2, Number(g.weeklyHours) || DEFAULT_GOAL.weeklyHours));
   g.strengthPerWeek = Math.min(3, Math.max(0, Math.round(Number(g.strengthPerWeek))));
@@ -408,7 +452,7 @@ function placeSessions(list, goal, firstDay) {
 function buildWeek(store, weekStartKey, firstDay, opts = {}) {
   const now = opts.now || new Date();
   const athlete = store.athlete;
-  const goal = getGoal(athlete);
+  const goal = getGoal(athlete, weekStartKey);
   const weekIndex = (store.plan.weekIndex || 0) + (opts.newWeek ? 1 : 0);
   let phase = phaseFor(goal, weekStartKey, weekIndex, athlete.deloadEveryNWeeks);
   // Keine Entlastungswoche als allererste geplante Woche
@@ -430,21 +474,72 @@ function buildWeek(store, weekStartKey, firstDay, opts = {}) {
   }
   const ctx = { now, acwr: report.acwr.acwr, formPct: report.fitness && report.fitness.reliable ? report.fitness.formPct : null, recoveryStatus: rec ? rec.status : null, completionRate: opts.completionRate ?? null, rpe: performance.rpeSignal(store, now) };
 
-  const vol = opts.volume || computeWeekVolume(store, goal, phase, ctx);
+  const vol = Object.assign({}, opts.volume || computeWeekVolume(store, goal, phase, ctx));
+  vol.reasons = [...(vol.reasons || [])];
+  const weekStart = new Date(weekStartKey + 'T00:00:00Z');
+  const dayKeyAt = (i) => addDaysKey(weekStartKey, i);
+
+  // Krank / Urlaub: diese Tage bleiben frei
+  const absentDays = [0, 1, 2, 3, 4, 5, 6].filter((d) => isAbsent(athlete, dayKeyAt(d)));
+  // Wiedereinstieg nach Krankheit oder längerer Pause
+  const recentAbs = (athlete.absences || []).filter((a) => a.to >= addDaysKey(weekStartKey, -3) && a.to <= addDaysKey(weekStartKey, 5));
+  const sickReturn = recentAbs.some((a) => a.type === 'krank');
+  const longBreak = recentAbs.some((a) => a.type !== 'krank' && (new Date(a.to) - new Date(a.from)) / DAY_MS >= 6);
+  let qualityCap = null;
+  if (sickReturn) {
+    vol.enduranceMinutes *= 0.8;
+    qualityCap = 1;
+    vol.reasons.push('Wiedereinstieg nach Krankheit – ruhiger Start (−20 %, max. eine fordernde Einheit)');
+  } else if (longBreak) {
+    vol.enduranceMinutes *= 0.85;
+    vol.reasons.push('nach längerer Pause behutsam wieder einsteigen (−15 %)');
+  }
+
+  // Wettkämpfe dieser Woche
+  const raceGoal = Object.assign({}, goal);
+  const restSet = new Set(goal.restDays);
+  const raceEntries = [];
+  const weekEndKey = dayKeyAt(6);
+  for (const r of getRaces(athlete)) {
+    const isMain = r.id === goal.raceId && phase.key === 'race';
+    if (r.date < weekStartKey || r.date > weekEndKey) {
+      // B-Wettkampf am Wochenende davor: Montag frei
+      if (r.priority === 'B' && r.date >= addDaysKey(weekStartKey, -2) && r.date < weekStartKey) restSet.add(0);
+      continue;
+    }
+    if (r.id === goal.raceId && !isMain) continue;
+    const day = Math.round((new Date(r.date + 'T00:00:00Z') - weekStart) / DAY_MS);
+    raceEntries.push({ race: r, day });
+    restSet.add(day);
+    if (r.priority !== 'C') restSet.add(day - 1);
+    if (r.priority === 'B') {
+      restSet.add(day + 1);
+      if (!isMain) {
+        vol.enduranceMinutes *= 0.8;
+        vol.reasons.push(`Mini-Tapering für ${r.name || DISTANCES[r.distance].label} (B-Wettkampf, −20 %)`);
+      }
+    }
+    if (r.priority === 'C') vol.reasons.push(`${r.name || DISTANCES[r.distance].label} ersetzt die fordernde Einheit (C-Wettkampf)`);
+  }
+  for (const d of absentDays) restSet.add(d);
+  raceGoal.restDays = [...restSet].filter((d) => d >= 0 && d <= 6);
+
   const freeDays = [0, 1, 2, 3, 4, 5, 6].filter((d) => !goal.restDays.includes(d));
-  const remainingDays = freeDays.filter((d) => d >= firstDay).length;
+  const remainingDays = freeDays.filter((d) => d >= firstDay && !absentDays.includes(d)).length;
   const scale = freeDays.length ? remainingDays / freeDays.length : 1;
+  if (absentDays.length) vol.reasons.push(`${absentDays.length} ${absentDays.length === 1 ? 'Tag' : 'Tage'} krank/Urlaub – frei gehalten`);
   const enduranceMinutes = Math.round(vol.enduranceMinutes * scale);
 
-  const raceGoal = Object.assign({}, goal);
-  const weekStart = new Date(weekStartKey + 'T00:00:00Z');
-  let raceDay = null;
-  if (phase.key === 'race' && goal.date) {
-    raceDay = Math.round((new Date(goal.date + 'T00:00:00Z') - weekStart) / DAY_MS);
-    // Tag vor dem Wettkampf frei halten, Wettkampftag selbst nur für den Wettkampf
-    raceGoal.restDays = [...new Set([...goal.restDays, raceDay, raceDay - 1].filter((d) => d >= 0 && d <= 6))];
-  }
   let composed = composeSessions(goal, phase, enduranceMinutes, weekIndex);
+  // Wettkämpfe ersetzen fordernde Einheiten; nach Krankheit max. eine
+  let dropQuality = raceEntries.filter((e) => e.race.id !== goal.raceId).length;
+  const qCount = composed.filter((c) => c.kind === 'quality').length;
+  if (qualityCap !== null) dropQuality = Math.max(dropQuality, qCount - qualityCap);
+  for (const c of composed) if (dropQuality > 0 && c.kind === 'quality') { c.kind = 'easy'; c.intensity = 'easy'; dropQuality--; }
+  // B-Wettkampf (nicht Hauptziel) in dieser Woche: kein langer Lauf/keine lange Ausfahrt – das Rennen ist der lange Reiz
+  if (raceEntries.some((e) => e.race.priority === 'B' && e.race.id !== goal.raceId)) {
+    for (const c of composed) if (c.kind === 'long') { c.kind = 'easy'; c.minutes = toBucket(c.sport, Math.min(c.minutes, c.sport === 'bike' ? 75 : 45)); }
+  }
   // Angefangene Woche: Krafteinheiten anteilig
   if (scale < 1) {
     let allowed = Math.round(composed.filter((c) => c.sport === 'strength').length * scale);
@@ -471,28 +566,35 @@ function buildWeek(store, weekStartKey, firstDay, opts = {}) {
     return list.length ? 2 : 3;
   };
   const mobDays = [...new Set(placed.map((p) => p._day))]
-    .filter((d) => d >= firstDay && d !== raceDay)
+    .filter((d) => d >= firstDay && !raceEntries.some((e) => e.day === d))
     .sort((x, y) => dayScore(x) - dayScore(y) || y - x)
     .slice(0, Math.max(0, mobility));
   for (const d of mobDays) {
     placed.push({ sport: 'mobility', kind: 'mobility', intensity: 'easy', minutes: dayScore(d) === 0 ? 20 : 15, _day: d });
   }
   placed.sort((x, y) => x._day - y._day || (x.kind === 'mobility') - (y.kind === 'mobility'));
-  if (raceDay !== null && raceDay >= firstDay && raceDay <= 6) {
-    placed.push({ sport: 'race', kind: 'race', intensity: 'hard', minutes: DISTANCES[goal.distance].raceMin || { sprint: 80, olympic: 150, half: 330, full: 720 }[goal.distance] || 150, _day: raceDay });
+  for (const e of raceEntries) {
+    if (e.day >= firstDay && e.day <= 6) {
+      placed.push({ sport: 'race', kind: 'race', intensity: 'hard', minutes: raceMinutes(e.race.distance), _day: e.day, race: e.race });
+    }
   }
+  placed.sort((x, y) => x._day - y._day || (x.kind === 'mobility') - (y.kind === 'mobility'));
 
   const sessions = placed.map((s, i) => {
     const day = new Date(weekStart.getTime() + s._day * DAY_MS).toISOString().slice(0, 10);
-    const type = s.sport === 'race' ? (DISTANCES[goal.distance].type === 'run' ? 'Laufwettkampf' : 'Triathlon') : GROUP_TYPE[s.sport];
     if (s.sport === 'race') {
+      const r = s.race;
+      const type = DISTANCES[r.distance].type === 'run' ? 'Laufwettkampf' : 'Triathlon';
+      const prioText = { A: 'Saisonhöhepunkt', B: 'B-Wettkampf', C: 'Trainingswettkampf – locker angehen, als harte Einheit nutzen' }[r.priority] || '';
       return {
-        id: `race_${day}`, day, weekday: WEEKDAYS[s._day], sport: type, kind: 'race', intensity: 'hard',
+        id: `race_${day}_${r.id || ''}`, day, weekday: WEEKDAYS[s._day], sport: type, kind: 'race', intensity: 'hard',
+        priority: r.priority, raceId: r.id || null, raceDistance: r.distance,
         targetDurationMin: s.minutes, targetLoad: round1(s.minutes * 9),
-        description: `${goal.name || 'Wettkampf'} – ${DISTANCES[goal.distance].label}. Viel Erfolg!`,
+        description: `${r.name || 'Wettkampf'} – ${DISTANCES[r.distance].label}${prioText ? ` (${prioText})` : ''}. Viel Erfolg!`,
         status: 'planned', matchedActivityId: null
       };
     }
+    const type = GROUP_TYPE[s.sport];
     return {
       id: `s_${day}_${s.sport}_${i}_${Date.now().toString(36)}`,
       day,
@@ -573,11 +675,14 @@ function replanCurrentWeek(store, now = new Date()) {
   if (ensureCurrentPlan(store, now)) return store.plan;
   const plan = store.plan;
   const todayKey = recovery.dayKey(now);
+  for (const s of plan.sessions) {
+    if (s.status === 'planned' && s.day < todayKey && isAbsent(store.athlete, s.day)) s.status = 'absent';
+  }
   const keep = plan.sessions.filter((s) => s.day < todayKey || s.status !== 'planned');
   const firstDay = todayIndex(plan.currentWeekStart, now);
   // gleicher Grundumfang wie bisher in dieser Woche (keine erneute Steigerung)
   const prevBase = plan.lastDecision && plan.lastDecision.baseMinutes;
-  const goal = getGoal(store.athlete);
+  const goal = getGoal(store.athlete, plan.currentWeekStart);
   const phase = phaseFor(goal, plan.currentWeekStart, plan.weekIndex || 0, store.athlete.deloadEveryNWeeks);
   const volume = prevBase
     ? { baseMinutes: prevBase, enduranceMinutes: Math.round(Math.min(prevBase, goal.weeklyHours * 60) * phase.volume), reasons: ['Woche neu verteilt'] }
@@ -605,6 +710,7 @@ function evaluatePreviousWeek(store) {
     if (session.manualOverride) return session;
     if (session.status !== 'planned') return session;
     if (session.kind === 'race') return { ...session, status: 'done' };
+    if (isAbsent(athlete, session.day)) return { ...session, status: 'absent' };
     const sessionDate = new Date(session.day + 'T00:00:00Z');
     const match = activities.find((act) => {
       if (used.has(act.id)) return false;
@@ -615,7 +721,7 @@ function evaluatePreviousWeek(store) {
     if (match) used.add(match.id);
     return { ...session, status: match ? 'done' : 'missed', matchedActivityId: match ? match.id : null };
   });
-  const counted = evaluated.filter((s) => s.kind !== 'mobility'); // Dehnen zählt nicht zur Erfüllungsquote
+  const counted = evaluated.filter((s) => s.kind !== 'mobility' && s.status !== 'absent'); // Dehnen und Krank/Urlaub zählen nicht
   const doneCount = counted.filter((s) => s.status === 'done').length;
   const completionRate = counted.length > 0 ? doneCount / counted.length : 1;
   const summary = analysis.computeWeeklySummary(activities, athlete, weekStart);
@@ -652,6 +758,13 @@ function decorateSessions(store) {
   const athlete = store.athlete;
   const ctxBase = { athlete, swimPace: workouts.swimPace(store.activities || []), targets: performance.targetsFor(store) };
   const lib = store.workoutLibrary || {};
+  const mainGoal = getGoal(athlete, store.plan.currentWeekStart || recovery.dayKey(new Date()));
+  const phaseKey = store.plan.lastDecision && store.plan.lastDecision.phase;
+  let raceCtx = null;
+  if (['runHalf', 'marathon'].includes(mainGoal.distance)) {
+    const info = performance.raceInfo(store, { distance: mainGoal.distance, targetTimeSec: mainGoal.targetTimeSec });
+    if (info && info.racePace) raceCtx = { racePace: info.racePace, basis: info.target ? `Zielzeit ${info.target}` : `Prognose ${info.predicted}` };
+  }
   return (store.plan.sessions || []).map((s) => {
     const g = groupOf(s.sport);
     if (!['swim', 'bike', 'run', 'strength', 'mobility'].includes(g)) return s;
@@ -662,6 +775,16 @@ function decorateSessions(store) {
     if (s.kind === 'brick') title = 'Koppellauf';
     const code = workouts.workoutCode(g, s.intensity, s.targetDurationMin, w);
     const steps = w.steps.filter(Boolean);
+    // Halbmarathon/Marathon: lange Läufe in Aufbau/Vorbereitung mit Abschnitt im Renntempo
+    if (s.kind === 'long' && g === 'run' && raceCtx && ['build', 'peak'].includes(phaseKey)) {
+      const share = phaseKey === 'peak' ? 0.3 : 0.15;
+      const n = Math.max(10, Math.round((s.targetDurationMin * share) / 5) * 5);
+      const idx = steps.findIndex((x) => /auslaufen/.test(x.text));
+      steps.splice(idx >= 0 ? idx : steps.length, 0, {
+        label: `davon ${n} min`, zone: null, hr: null,
+        text: `am Ende des Hauptteils im Renntempo ${raceCtx.racePace} /km (${raceCtx.basis}) – so gewöhnst du dich an das Tempo mit müden Beinen`
+      });
+    }
     if (s.kind === 'brick') {
       steps.unshift({ label: 'direkt', text: 'unmittelbar nach dem Rad loslaufen – Schuhe wechseln, keine Pause. Die ersten Minuten fühlen sich schwer an, das ist normal und genau der Trainingsreiz.', hr: null, zone: null });
     }
@@ -757,5 +880,5 @@ function adjustSession(store, sessionId, action, reason) {
 
 module.exports = {
   generateNextWeekPlan, ensureCurrentPlan, replanCurrentWeek, evaluatePreviousWeek, autoMarkDone,
-  decorateSessions, suggestAdjustment, adjustSession, getGoal, phaseFor, DISTANCES, PHASES
+  decorateSessions, suggestAdjustment, adjustSession, getGoal, getRaces, mainRace, isAbsent, raceMinutes, addDaysKey, phaseFor, DISTANCES, PHASES
 };

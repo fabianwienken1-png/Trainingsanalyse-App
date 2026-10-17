@@ -53,6 +53,8 @@
       <div id="form-card"></div>
       <div id="recovery-card"></div>
       <div id="plan-suggestion"></div>
+      <div id="week-review"></div>
+      <div id="shoe-alert"></div>
       <div id="rpe-prompt"></div>
       <div id="stat-tiles" class="tiles"></div>
       <div id="week-card"></div>
@@ -91,32 +93,73 @@
     </header>
     <div class="view-body" id="goal-section">
       <div id="goal-summary"></div>
-      <form id="goal-form" class="card form-card">
+
+      <div class="section-head"><h3 class="section-title">Wettkämpfe</h3><button class="pill-btn" id="add-race-btn" type="button">+ Wettkampf</button></div>
+      <div class="card" id="race-list"></div>
+      <form id="race-form" class="card form-card" hidden>
+        <input type="hidden" id="race-id" />
         <div class="form-row">
-          <label for="goal-name">Wettkampf (Name, optional)</label>
-          <input id="goal-name" type="text" maxlength="60" placeholder="z.B. Triathlon Ingolstadt" />
+          <label for="race-name">Name (optional)</label>
+          <input id="race-name" type="text" maxlength="60" placeholder="z.B. Marathon Mailand" />
         </div>
         <div class="form-row">
-          <label for="goal-date">Datum</label>
-          <input id="goal-date" type="date" />
+          <label for="race-date">Datum</label>
+          <input id="race-date" type="date" required />
         </div>
         <div class="form-row">
-          <label for="goal-distance">Distanz</label>
-          <select id="goal-distance">
+          <label for="race-distance">Distanz</label>
+          <select id="race-distance">
+            <optgroup label="Laufen">
+              <option value="run5k">5-km-Lauf</option>
+              <option value="run10k">10-km-Lauf</option>
+              <option value="runHalf">Halbmarathon (21,1 km)</option>
+              <option value="marathon">Marathon (42,2 km)</option>
+            </optgroup>
             <optgroup label="Triathlon">
-                  <option value="sprint">Sprintdistanz (0,75 / 20 / 5 km)</option>
-            <option value="olympic">Olympische Distanz (1,5 / 40 / 10 km)</option>
-            <option value="half">Mitteldistanz (1,9 / 90 / 21 km)</option>
-            <option value="full">Langdistanz (3,8 / 180 / 42 km)</option>
-                </optgroup>
-                <optgroup label="Laufen">
-                  <option value="run10k">10-km-Lauf</option>
-                  <option value="runHalf">Halbmarathon (21,1 km)</option>
-                  <option value="marathon">Marathon (42,2 km)</option>
-                </optgroup>
-            <option value="none">Kein Wettkampf – Form aufbauen</option>
+              <option value="sprint">Sprintdistanz (0,75 / 20 / 5 km)</option>
+              <option value="olympic">Olympische Distanz (1,5 / 40 / 10 km)</option>
+              <option value="half">Mitteldistanz (1,9 / 90 / 21 km)</option>
+              <option value="full">Langdistanz (3,8 / 180 / 42 km)</option>
+            </optgroup>
           </select>
         </div>
+        <div class="form-row">
+          <label for="race-priority">Priorität</label>
+          <select id="race-priority">
+            <option value="A">A – Saisonhöhepunkt (Plan richtet sich danach)</option>
+            <option value="B">B – wichtig, kurzes Tapering</option>
+            <option value="C">C – Trainingswettkampf, kein Tapering</option>
+          </select>
+        </div>
+        <div class="form-row" id="race-target-row">
+          <label for="race-target">Zielzeit (optional, Laufen)</label>
+          <input id="race-target" type="text" inputmode="numeric" placeholder="z.B. 3:45:00" />
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="primary-btn">Speichern</button>
+          <button type="button" class="secondary-btn" id="race-cancel-btn">Abbrechen</button>
+        </div>
+        <button type="button" class="danger-btn" id="race-delete-btn" hidden>Wettkampf löschen</button>
+      </form>
+
+      <h3 class="section-title">Krank &amp; Urlaub</h3>
+      <div class="card" id="absence-card">
+        <div id="absence-list"></div>
+        <form id="absence-form" class="absence-form">
+          <div class="absence-grid">
+            <div><label for="abs-from" class="small muted">von</label><input id="abs-from" type="date" required /></div>
+            <div><label for="abs-to" class="small muted">bis</label><input id="abs-to" type="date" /></div>
+          </div>
+          <div class="btn-row" style="margin-top:10px">
+            <select id="abs-type" style="flex:1"><option value="krank">krank</option><option value="urlaub">Urlaub / keine Zeit</option></select>
+            <button type="submit" class="secondary-btn">Eintragen</button>
+          </div>
+          <p class="muted small" style="margin:8px 0 0">An diesen Tagen plant die App nichts. Nach einer Krankheit startet die Folgewoche ruhiger (−20 %, max. eine fordernde Einheit).</p>
+        </form>
+      </div>
+
+      <h3 class="section-title">Trainingszeit</h3>
+      <form id="goal-form" class="card form-card">
         <div class="form-row">
           <label for="goal-hours">Verfügbare Trainingszeit pro Woche (Stunden)</label>
           <input id="goal-hours" type="number" inputmode="decimal" min="2" max="25" step="0.5" />
@@ -144,7 +187,7 @@
           <span class="label-like" id="rest-label">Feste Ruhetage</span>
           <div class="chip-row wrap" id="goal-restdays" role="group" aria-labelledby="rest-label"></div>
         </div>
-        <p class="muted small" style="margin:0">Der Plan baut darauf auf: Phasen bis zum Wettkampf (Grundlage → Aufbau → Vorbereitung → Tapering), Einheiten-Mix passend zur Distanz und Steigerung um max. 10 % pro Woche. Speichern plant die laufende Woche neu.</p>
+        <p class="muted small" style="margin:0">Der Plan richtet sich nach deinem nächsten A-Wettkampf: Phasen (Grundlage → Aufbau → Vorbereitung → Tapering), Einheiten-Mix passend zur Distanz, Steigerung um max. 10 % pro Woche. Speichern plant die laufende Woche neu.</p>
         <button type="submit" class="primary-btn">Speichern &amp; Woche neu planen</button>
       </form>
     </div>
@@ -305,6 +348,12 @@
       <button type="submit" class="primary-btn">Speichern</button>
     </form>
 
+    <h3 class="section-title">Morgen-Erinnerung</h3>
+    <div class="card" id="push-card"></div>
+
+    <h3 class="section-title">Laufschuhe</h3>
+    <div class="card" id="shoe-card"></div>
+
     <h3 class="section-title">Datenimport · Health Auto Export</h3>
     <div class="card" id="health-import-status"></div>
 
@@ -331,6 +380,7 @@
         <p class="muted small" style="margin-top:0">Lädt alle Trainingsdaten als JSON-Datei herunter.</p>
         <button type="button" class="secondary-btn" id="export-backup-btn">Backup exportieren</button>
       </div>
+      <div id="auto-backup"></div>
       <div id="logout-row" hidden>
         <button type="button" class="secondary-btn" id="logout-btn">Abmelden</button>
       </div>

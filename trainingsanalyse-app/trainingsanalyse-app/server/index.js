@@ -27,6 +27,8 @@ const performance = require('./performance');
 const healthImport = require('./health-import');
 const healthAutoExport = require('./health-auto-export');
 const dedupe = require('./dedupe');
+const backup = require('./backup');
+const push = require('./push');
 const recovery = require('./recovery');
 const auth = require('./auth');
 const athleteHr = require('./athlete-hr');
@@ -198,9 +200,13 @@ route('GET', '/api/state', async (req, res) => {
   if (Object.keys(hrChanges).length) console.log('[puls] automatisch aktualisiert:', JSON.stringify(hrChanges));
   const reclassified = healthImport.reclassifyActivities(s);
   if (reclassified) console.log(`[sportart] ${reclassified} Einträge neu eingeordnet.`);
+  const migrated = migrateRaces(s);
+  const vapidNew = push.ensureVapid(s);
+  const results = performance.updateRaceResults(s, recovery.dayKey(new Date()));
   const planChanged = planner.ensureCurrentPlan(s);
   const marked = planner.autoMarkDone(s);
-  if (Object.keys(hrChanges).length || planChanged || marked || reclassified) await saveStore(s);
+  if (Object.keys(hrChanges).length || planChanged || marked || reclassified || migrated || results || vapidNew) await saveStore(s);
+  backgroundJobs();
   const report = analysis.buildAnalysisReport(s.activities, s.athlete);
   const rec = recovery.computeRecovery(s.health);
   if (rec && rec.status === 'eingeschränkt') {
@@ -231,6 +237,12 @@ route('GET', '/api/state', async (req, res) => {
     healthMetrics: { lastImportAt: (s.health && s.health.lastImportAt) || null },
     plan: Object.assign({}, s.plan, { sessions: planner.decorateSessions(s), history: (s.plan.history || []).slice(0, 8) }),
     goal: planner.getGoal(s.athlete),
+    races: planner.getRaces(s.athlete).map((r) => Object.assign({}, r, { info: performance.raceInfo(s, r) })),
+    absences: s.athlete.absences || [],
+    weekReview: weekReview(s),
+    shoes: shoeStats(s),
+    backup: backup.status(s),
+    pushSettings: Object.assign(push.settings(s), { publicKey: s.push && s.push.vapid ? s.push.vapid.publicKey : null }),
     performance: performanceInfo(s),
     rpe: performance.rpeSignal(s),
     trends: performance.trends(s),
@@ -246,14 +258,7 @@ route('GET', '/api/state', async (req, res) => {
 // die Trainingsdaten sichern, keine Secrets weitergeben.
 route('GET', '/api/backup', async (req, res) => {
   const s = await loadStore();
-  const exportData = JSON.parse(JSON.stringify(s));
-  if (exportData.strava) {
-    exportData.strava.accessToken = null;
-    exportData.strava.refreshToken = null;
-  }
-  if (exportData.appleHealth) {
-    exportData.appleHealth.importToken = null;
-  }
+  const exportData = backup.exportData(s);
   const filename = `trainingsanalyse-backup-${new Date().toISOString().slice(0, 10)}.json`;
   const body = JSON.stringify(exportData, null, 2);
   res.writeHead(200, {
@@ -424,6 +429,297 @@ route('POST', '/api/plan/adjust-session', async (req, res) => {
 // health-import.js/health-auto-export.js - sonst für immer in der App
 // stehen blieben würden). Kein Pfad-Parameter-Routing im einfachen Router hier,
 // daher als Query-Parameter statt "/api/activities/:id".
+// Hintergrundaufgaben (Backup, Morgen-Push) – nie awaiten, damit kein Request
+// auf die Schreib-Warteschlange wartet, in der er selbst steckt.
+function backgroundJobs() {
+  const deps = { loadStore, saveStore, withWriteLock };
+  backup.maybeBackup(deps).catch((e) => console.log('[backup]', e.message));
+  push.maybeSendMorning(deps).catch((e) => console.log('[push]', e.message));
+}
+
+// Laufschuhe: km je Schuh. Läufe ohne eigene Zuordnung zählen für den
+// Standardschuh ab dessen Startdatum.
+function shoeStats(s) {
+  const shoes = s.athlete.shoes || [];
+  const def = shoes.find((x) => x.isDefault && !x.retired);
+  return shoes.map((sh) => {
+    let km = Number(sh.startKm) || 0;
+    let runs = 0;
+    for (const a of s.activities || []) {
+      if (!['Run', 'TrailRun'].includes(a.type)) continue;
+      const mine = a.shoeId ? a.shoeId === sh.id : def && def.id === sh.id && analysis.dayKeyOf(new Date(a.startDate)) >= (sh.since || '0000');
+      if (!mine) continue;
+      km += (a.distanceMeters || 0) / 1000;
+      runs++;
+    }
+    return Object.assign({}, sh, { km: Math.round(km), runs });
+  });
+}
+
+// Bisheriges Einzelziel (athlete.goal.name/date/distance) in die Wettkampfliste übernehmen
+function migrateRaces(s) {
+  if (Array.isArray(s.athlete.races)) return false;
+  const g = s.athlete.goal || {};
+  s.athlete.races = g.date && g.distance && g.distance !== 'none'
+    ? [{ id: 'r' + Date.now().toString(36), name: g.name || '', date: g.date, distance: g.distance, priority: 'A', targetTimeSec: null }]
+    : [];
+  return true;
+}
+
+// Rückblick auf die Vorwoche (Karte auf "Heute", Mo–Mi)
+function weekReview(s) {
+  const h = (s.plan.history || [])[0];
+  if (!h || !h.weekStart) return null;
+  const end = planner.addDaysKey(h.weekStart, 6);
+  const sessions = (h.sessions || []).filter((x) => x.kind !== 'mobility' && x.kind !== 'race' && x.status !== 'absent');
+  const done = sessions.filter((x) => x.status === 'done');
+  const acts = (s.activities || []).filter((a) => {
+    const k = analysis.dayKeyOf(new Date(a.startDate));
+    return k >= h.weekStart && k <= end;
+  });
+  const minutes = Math.round(acts.reduce((m, a) => m + (a.movingTimeSec || 0) / 60, 0));
+  const sleepVals = Object.entries((s.health && s.health.sleep) || {})
+    .filter(([k, v]) => k > h.weekStart && k <= planner.addDaysKey(end, 1) && v && v.total > 0).map(([, v]) => v.total);
+  const rpes = acts.filter((a) => a.rpe).map((a) => a.rpe);
+  const avg = (arr) => (arr.length ? Math.round((arr.reduce((x, y) => x + y, 0) / arr.length) * 10) / 10 : null);
+  return {
+    weekStart: h.weekStart,
+    planned: sessions.length,
+    done: done.length,
+    completionRate: h.completionRate,
+    minutes,
+    activities: acts.length,
+    sleepAvg: avg(sleepVals),
+    rpeAvg: avg(rpes),
+    missed: sessions.filter((x) => x.status === 'missed').map((x) => `${x.weekday} ${x.sport}`),
+    next: s.plan.lastDecision ? { phaseLabel: s.plan.lastDecision.phaseLabel, reason: s.plan.lastDecision.reason } : null
+  };
+}
+
+// ---------- Backup ----------
+route('POST', '/api/backup/run', async (req, res) => {
+  if (!backup.enabled()) return sendError(res, 400, 'Automatisches Backup ist nicht eingerichtet (GITHUB_BACKUP_REPO / GITHUB_BACKUP_TOKEN bei Render fehlen).');
+  // läuft bereits in der Schreib-Warteschlange → direkt speichern
+  const r = await backup.maybeBackup({ loadStore, saveStore, withWriteLock: (fn) => fn(), force: true });
+  if (!r) return sendError(res, 409, 'Backup läuft gerade.');
+  if (r.lastError && r.lastErrorAt && (!r.lastAt || r.lastErrorAt > r.lastAt)) return sendError(res, 502, 'Backup fehlgeschlagen: ' + r.lastError);
+  sendJson(res, 200, { ok: true, backup: r });
+});
+
+// ---------- Morgen-Erinnerung (Web Push) ----------
+route('POST', '/api/push/subscribe', async (req, res) => {
+  const body = await parseJsonBody(req);
+  const sub = body && body.subscription;
+  if (!sub || !sub.endpoint || !/^https:\/\//.test(sub.endpoint)) return sendError(res, 400, 'Ungültiges Abo.');
+  const s = await loadStore();
+  push.ensureVapid(s);
+  s.push.subscriptions = (s.push.subscriptions || []).filter((x) => x.endpoint !== sub.endpoint);
+  s.push.subscriptions.push({ endpoint: sub.endpoint, createdAt: new Date().toISOString() });
+  s.push.subject = `https://${req.headers.host}`;
+  s.push.enabled = true;
+  if (body.time && /^\d{2}:\d{2}$/.test(body.time)) s.push.time = body.time;
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, settings: push.settings(s) });
+});
+
+route('POST', '/api/push/settings', async (req, res) => {
+  const body = await parseJsonBody(req);
+  const s = await loadStore();
+  push.ensureVapid(s);
+  if (typeof body.enabled === 'boolean') s.push.enabled = body.enabled;
+  if (body.time && /^\d{2}:\d{2}$/.test(body.time)) { s.push.time = body.time; s.push.lastSentDay = null; }
+  if (body.removeEndpoint) s.push.subscriptions = (s.push.subscriptions || []).filter((x) => x.endpoint !== body.removeEndpoint);
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, settings: push.settings(s) });
+});
+
+route('POST', '/api/push/test', async (req, res) => {
+  const s = await loadStore();
+  if (!(s.push && (s.push.subscriptions || []).length)) return sendError(res, 400, 'Noch kein Gerät angemeldet.');
+  const n = await push.sendAll(s);
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, sent: n });
+});
+
+// Text der Morgen-Erinnerung (holt der Service Worker beim Empfang)
+route('GET', '/api/push/today', async (req, res) => {
+  const s = await loadStore();
+  const todayKey = recovery.dayKey(new Date());
+  const rec = recovery.computeRecovery(s.health);
+  const sessions = planner.decorateSessions(s).filter((x) => x.day === todayKey && x.status === 'planned');
+  const sugg = planner.suggestAdjustment(s, rec, todayKey);
+  let title = 'Heute: Ruhetag';
+  let body = 'Kein Training geplant – Erholung ist Teil des Trainings.';
+  const race = sessions.find((x) => x.kind === 'race');
+  if (race) {
+    title = 'Heute ist Wettkampf! 🏁';
+    body = race.description;
+  } else if (sessions.length) {
+    const main = sessions.filter((x) => x.kind !== 'mobility');
+    const list = (main.length ? main : sessions).map((x) => {
+      const w = x.workout || {};
+      const extra = [w.mainHr ? `♥ ${w.mainHr}` : null, w.mainPace || w.mainWatts || null].filter(Boolean).join(' · ');
+      return `${w.title || x.sport} ${x.targetDurationMin} min${extra ? ` (${extra})` : ''}`;
+    });
+    title = `Heute: ${list[0]}`;
+    body = list.slice(1).join(' + ') || 'Ablauf und Zielwerte in der App.';
+  }
+  if (sugg) body = `Erholung: ${sugg.reason} Vorschlag: locker statt hart – in der App übernehmen.`;
+  else if (rec && rec.status === 'gut' && sessions.length) body += ' · Gut erholt 💪';
+  sendJson(res, 200, { title, body });
+});
+
+// ---------- Laufschuhe ----------
+route('POST', '/api/shoes', async (req, res) => {
+  const body = await parseJsonBody(req);
+  const s = await loadStore();
+  const shoes = Array.isArray(s.athlete.shoes) ? s.athlete.shoes : [];
+  if (body.action === 'save') {
+    const sh = body.shoe || {};
+    const name = String(sh.name || '').trim().slice(0, 40);
+    if (!name) return sendError(res, 400, 'Bitte einen Namen angeben.');
+    const shoe = {
+      id: 'sh' + Date.now().toString(36),
+      name,
+      startKm: Math.max(0, Math.round(Number(sh.startKm) || 0)),
+      limitKm: Math.min(2000, Math.max(200, Math.round(Number(sh.limitKm) || 700))),
+      since: recovery.dayKey(new Date()),
+      isDefault: !shoes.some((x) => x.isDefault && !x.retired),
+      retired: false
+    };
+    shoes.push(shoe);
+  } else {
+    const sh = shoes.find((x) => x.id === body.id);
+    if (!sh) return sendError(res, 404, 'Schuh nicht gefunden.');
+    if (body.action === 'default') { for (const x of shoes) x.isDefault = x.id === sh.id; sh.retired = false; }
+    if (body.action === 'retire') { sh.retired = true; sh.isDefault = false; }
+    if (body.action === 'delete') {
+      s.athlete.shoes = shoes.filter((x) => x.id !== sh.id);
+      for (const a of s.activities) if (a.shoeId === sh.id) delete a.shoeId;
+    }
+  }
+  if (body.action !== 'delete') s.athlete.shoes = shoes;
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, shoes: shoeStats(s) });
+});
+
+route('POST', '/api/activities/shoe', async (req, res) => {
+  const body = await parseJsonBody(req);
+  const s = await loadStore();
+  const act = s.activities.find((a) => a.id === body.id);
+  if (!act) return sendError(res, 404, 'Aktivität nicht gefunden.');
+  if (body.shoeId) act.shoeId = body.shoeId; else delete act.shoeId;
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, shoes: shoeStats(s) });
+});
+
+// Wettkämpfe: speichern (neu/ändern) oder löschen, danach Woche neu planen
+route('POST', '/api/races', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const s = await loadStore();
+  migrateRaces(s);
+  if (body.action === 'delete') {
+    s.athlete.races = s.athlete.races.filter((r) => r.id !== body.id);
+  } else {
+    const r = body.race || {};
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date || '')) return sendError(res, 400, 'Bitte ein gültiges Datum angeben.');
+    if (!planner.DISTANCES[r.distance] || r.distance === 'none') return sendError(res, 400, 'Bitte eine Distanz wählen.');
+    const targetTimeSec = r.targetTime ? performance.parseTime(r.targetTime) : null;
+    if (r.targetTime && !targetTimeSec) return sendError(res, 400, 'Zielzeit nicht lesbar (Format h:mm:ss oder mm:ss).');
+    const clean = {
+      id: r.id || 'r' + Date.now().toString(36),
+      name: String(r.name || '').slice(0, 60),
+      date: r.date,
+      distance: r.distance,
+      priority: ['A', 'B', 'C'].includes(r.priority) ? r.priority : 'A',
+      targetTimeSec: targetTimeSec || null
+    };
+    const idx = s.athlete.races.findIndex((x) => x.id === clean.id);
+    if (idx >= 0) {
+      const prev = s.athlete.races[idx];
+      if (prev.result && prev.date === clean.date && prev.distance === clean.distance) clean.result = prev.result;
+      s.athlete.races[idx] = clean;
+    } else {
+      s.athlete.races.push(clean);
+    }
+  }
+  s.athlete.races.sort((a, b) => (a.date < b.date ? -1 : 1));
+  planner.replanCurrentWeek(s);
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, races: s.athlete.races });
+});
+
+// Krank / Urlaub
+route('POST', '/api/absences', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const s = await loadStore();
+  const list = Array.isArray(s.athlete.absences) ? s.athlete.absences : [];
+  if (body.action === 'delete') {
+    s.athlete.absences = list.filter((a) => a.id !== body.id);
+  } else {
+    const a = body.absence || {};
+    const ok = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+    if (!ok(a.from)) return sendError(res, 400, 'Bitte ein Startdatum angeben.');
+    const to = ok(a.to) ? a.to : a.from;
+    if (to < a.from) return sendError(res, 400, 'Das Ende liegt vor dem Beginn.');
+    list.push({ id: 'a' + Date.now().toString(36), from: a.from, to, type: a.type === 'krank' ? 'krank' : 'urlaub' });
+    s.athlete.absences = list.sort((x, y) => (x.from < y.from ? -1 : 1)).slice(-30);
+  }
+  planner.replanCurrentWeek(s);
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, absences: s.athlete.absences });
+});
+
+// Einheit auf einen anderen Tag dieser Woche verschieben
+route('POST', '/api/plan/move', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const s = await loadStore();
+  const sessions = s.plan.sessions || [];
+  const session = sessions.find((x) => x.id === body.sessionId);
+  if (!session) return sendError(res, 404, 'Einheit nicht gefunden.');
+  if (session.kind === 'race') return sendError(res, 400, 'Wettkämpfe lassen sich nicht verschieben – Datum im Tab „Ziel“ ändern.');
+  const todayKey = recovery.dayKey(new Date());
+  const day = String(body.day || '');
+  const weekEnd = planner.addDaysKey(s.plan.currentWeekStart, 6);
+  if (day < s.plan.currentWeekStart || day > weekEnd) return sendError(res, 400, 'Nur innerhalb der laufenden Woche möglich.');
+  if (day < todayKey) return sendError(res, 400, 'Vergangene Tage können nicht gewählt werden.');
+  const isHard = (x) => ['quality', 'long', 'brick'].includes(x.kind) || x.intensity === 'hard';
+  const others = sessions.filter((x) => x !== session && x.kind !== 'mobility');
+  const warnings = [];
+  if (isHard(session)) {
+    const near = others.filter((x) => isHard(x) && [planner.addDaysKey(day, -1), day, planner.addDaysKey(day, 1)].includes(x.day));
+    if (near.length) warnings.push('Direkt daneben liegt schon eine harte Einheit – zwei harte Tage hintereinander erhöhen das Verletzungsrisiko. Überleg, eine davon locker zu machen.');
+  }
+  if (others.filter((x) => x.day === day).length >= 2) warnings.push('An diesem Tag stehen dann schon 3 Einheiten.');
+  if (session.kind === 'strength' && others.some((x) => x.day === planner.addDaysKey(day, 1) && isHard(x))) {
+    warnings.push('Kraft am Tag vor einer harten Einheit ist ungünstig – die Beine sind dann noch müde.');
+  }
+  if (planner.isAbsent(s.athlete, day)) warnings.push('An diesem Tag ist Krank/Urlaub eingetragen.');
+  const wd = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'][Math.round((new Date(day + 'T00:00:00Z') - new Date(s.plan.currentWeekStart + 'T00:00:00Z')) / 86400000)];
+  session.day = day;
+  session.weekday = wd;
+  session.moved = true;
+  s.plan.sessions = sessions.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+  planner.autoMarkDone(s);
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, warnings });
+});
+
 function performanceInfo(s) {
   const run = performance.runPerformance(s);
   return {
@@ -837,6 +1133,7 @@ route('POST', '/webhook', async (req, res) => {
 // Render UND Supabase wach bleiben – gibt aber keine Daten heraus.
 route('GET', '/api/health', async (req, res) => {
   const s = await loadStore();
+  backgroundJobs();
   sendJson(res, 200, { ok: true, activities: s.activities.length > 0, time: new Date().toISOString() });
 });
 
@@ -921,5 +1218,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Trainingsanalyse-App läuft auf Port ${PORT}`);
+  // Morgen-Push und Backup alle 5 Minuten prüfen (der Keep-alive hält den Server wach)
+  setInterval(backgroundJobs, 5 * 60 * 1000).unref();
   console.log(`Lokal erreichbar unter: http://localhost:${PORT}`);
 });

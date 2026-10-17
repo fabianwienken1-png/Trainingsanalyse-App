@@ -7,7 +7,7 @@
 //
 // CACHE_NAME wird bei jedem Update dieser Datei erhöht - das sorgt zusätzlich
 // dafür, dass activate() den alten Cache zuverlässig verwirft.
-const CACHE_NAME = 'trainingsanalyse-shell-v24';
+const CACHE_NAME = 'trainingsanalyse-shell-v26';
 const SHELL_FILES = [
   '/',
   '/css/style.css',
@@ -48,4 +48,37 @@ self.addEventListener('fetch', (event) => {
       })
       .catch(() => caches.match(event.request)) // nur bei Netzwerkfehler auf Cache zurückfallen
   );
+});
+
+// Morgen-Erinnerung: Push kommt ohne Inhalt, den Text holen wir live vom Server
+self.addEventListener('push', (event) => {
+  event.waitUntil((async () => {
+    let title = 'Dein Training heute';
+    let body = 'Öffne die App für Ablauf und Zielwerte.';
+    try {
+      const res = await fetch('/api/push/today', { credentials: 'same-origin', cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        title = data.title || title;
+        body = data.body || body;
+      }
+    } catch (e) { /* offline – Standardtext */ }
+    await self.registration.showNotification(title, {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: 'morgen'
+    });
+  })());
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if ('focus' in c) { c.navigate('/#heute').catch(() => {}); return c.focus(); }
+    }
+    return self.clients.openWindow('/#heute');
+  })());
 });

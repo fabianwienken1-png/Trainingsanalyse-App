@@ -421,6 +421,8 @@ function renderToday() {
   ]));
 
   renderRpePrompt();
+  renderWeekReview();
+  renderShoeAlert();
 
   // Nächste Einheit
   mount('next-session', renderNextSession(now));
@@ -523,6 +525,7 @@ function infoContent(key) {
           'Phasen: Ohne Wettkampf trainierst du in der Grundlage. Mit Wettkampf-Datum durchläuft der Plan Grundlage (mehr als 16 Wochen vorher) → Aufbau → Wettkampfvorbereitung (letzte 8 Wochen, beim Triathlon mit Koppeltraining) → Tapering (10 km: 1 Woche, Triathlon & Halbmarathon: 2 Wochen, Marathon: 3 Wochen) → Wettkampfwoche. Jede 4. Woche ist eine Entlastungswoche.',
           'Umfang: steigt um max. 10 % pro Woche (Sicherheitsgrenze) – aber nur, wenn du die Vorwoche zu mindestens 70 % geschafft hast, deine Form nicht im Überlastungsbereich liegt, die Erholung (Schlaf, HRV, Ruhepuls) nicht eingeschränkt ist und sich das Training nicht zu schwer anfühlt. Obergrenze sind deine verfügbaren Stunden. Die Entlastungswoche wird vorgezogen, wenn HRV-Trend und Gefühl Ermüdung zeigen.',
           'Intensität: Pulszonen hängen an deinem Schwellenpuls, Tempo an deiner Bestzeit, Watt an der FTP. Fordernde Einheiten sind meist unterschwellige Intervalle (knapp unter der Schwelle, kurze Pausen), im Aufbau zusätzlich harte Intervalle. Kraft: schwer mit 4–6 Wdh. plus Sprünge. Lange Einheiten mit Verpflegungshinweis.',
+          'Wettkämpfe: Der nächste A-Wettkampf bestimmt die Phasen. B-Wettkämpfe bekommen ein Mini-Tapering (Woche −20 %, Vortag und Folgetag frei, kein langer Lauf), C-Wettkämpfe ersetzen einfach die fordernde Einheit. Krank/Urlaub-Tage bleiben frei, danach geht es ruhiger weiter.',
           'Verteilung: Triathlon-Mix nach Distanz bzw. bei Laufzielen 3–5 Läufe plus lockeres Rad/Schwimmen als Ausgleich, lange Einheiten am Wochenende, nur 1–2 fordernde Einheiten pro Woche (80/20-Prinzip), Kraft fest eingeplant. Jeden Montag wird die Vorwoche ausgewertet und automatisch neu geplant.'
         ],
         current: d.reason || null
@@ -1021,7 +1024,7 @@ function renderPlan() {
         el('div', { class: 'session-card race' }, [
           el('div', { class: 'session-main' }, [
             el('div', { class: 'sport-icon sm', style: 'background:#3a2e12;color:#f5b544', html: FLAG_ICON }),
-            el('div', { class: 'session-text' }, [el('div', { class: 'title' }, 'Wettkampf'), el('div', { class: 'desc' }, s.description)])
+            el('div', { class: 'session-text' }, [el('div', { class: 'title' }, [s.priority ? `${s.priority}-Wettkampf` : 'Wettkampf']), el('div', { class: 'desc' }, s.description)])
           ])
         ])
       ]));
@@ -1033,6 +1036,8 @@ function renderPlan() {
     if (s.status === 'done') {
       chip = el('span', { class: 'chip outline-good' }, 'Erledigt');
       footer = el('button', { class: 'reset-btn', type: 'button', onclick: () => onSetSessionStatus(s.id, 'planned') }, 'Zurücksetzen');
+    } else if (s.status === 'absent') {
+      chip = el('span', { class: 'chip solid-muted' }, 'Krank/Urlaub');
     } else if (s.status === 'missed') {
       chip = el('span', { class: 'chip outline-danger' }, 'Ausgelassen');
       footer = el('button', { class: 'reset-btn', type: 'button', onclick: () => onSetSessionStatus(s.id, 'planned') }, 'Zurücksetzen');
@@ -1106,9 +1111,39 @@ function openSessionDetail(id) {
     code: s.workout.code, device: s.workout.device, created: s.workout.created, why
   };
   document.getElementById('session-detail-title').textContent = s.workout.title;
-  mount('session-detail-body', workoutCard(w, 'Wozu diese Einheit?'));
+  mount('session-detail-body', workoutCard(w, 'Wozu diese Einheit?'), s.status === 'planned' ? moveBox(s) : null);
   const dlg = document.getElementById('session-detail-dialog');
   if (!dlg.open) dlg.showModal();
+}
+
+// Einheit auf einen anderen Tag dieser Woche verschieben
+function moveBox(s) {
+  const plan = currentState.plan;
+  const todayKey = localKey(new Date());
+  const box = el('div', { class: 'card' }, [el('div', { class: 'small muted' }, 'Passt der Tag nicht? Verschieben auf:')]);
+  const days = el('div', { class: 'move-days' });
+  const warn = el('div', { class: 'move-warn' });
+  for (let i = 0; i < 7; i++) {
+    const key = addDaysKey(plan.currentWeekStart, i);
+    if (key < todayKey || key === s.day) continue;
+    days.appendChild(el('button', { class: 'filter-chip', type: 'button', onclick: async () => {
+      try {
+        const r = await postJson('/api/plan/move', { sessionId: s.id, day: key });
+        await refresh();
+        if (r.warnings && r.warnings.length) {
+          openSessionDetail(s.id);
+          const w = document.querySelector('#session-detail-body .move-warn');
+          if (w) w.textContent = `Verschoben auf ${WEEKDAYS_SHORT[i]}. Hinweis: ${r.warnings.join(' ')}`;
+        } else {
+          document.getElementById('session-detail-dialog').close();
+        }
+      } catch (e) { alert(e.message); }
+    } }, `${WEEKDAYS_SHORT[i]} ${Number(key.slice(8))}.`));
+  }
+  if (!days.children.length) return null;
+  box.appendChild(days);
+  box.appendChild(warn);
+  return box;
 }
 
 // Zielpuls einer Plan-Einheit (Hauptteil) – gleiche Formel wie auf dem Server (Karvonen)
@@ -1283,6 +1318,7 @@ function openActivityDetail(act) {
       new Date(act.startDate).toLocaleString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ` · ${sourceLabel}`),
     el('div', { class: 'detail-grid' }, items.map(([l, v]) => el('div', {}, [el('div', { class: 'label' }, l), el('div', { class: 'value' }, v)]))),
     rpeEditor(act),
+    shoeEditor(act),
     typeEditor(act)
   );
   document.getElementById('activity-detail-dialog').showModal();
@@ -1316,6 +1352,31 @@ function rpeScale(current, onPick) {
       onclick: () => onPick(n)
     }, String(n))));
   return el('div', {}, [row, label]);
+}
+
+// Wochenrückblick: Mo–Mi auf "Heute", bis er weggeklickt wird
+function renderWeekReview() {
+  const r = currentState.weekReview;
+  const dow = (new Date().getDay() + 6) % 7; // 0 = Montag
+  let dismissed = null;
+  try { dismissed = localStorage.getItem('reviewDismissed'); } catch (e) { /* privat */ }
+  if (!r || dow > 2 || dismissed === r.weekStart || !r.planned) { mount('week-review'); return; }
+  const kw = isoWeek(new Date(r.weekStart + 'T12:00:00'));
+  const pct = Math.round(r.completionRate ?? (r.planned ? (r.done / r.planned) * 100 : 0));
+  const verdict = pct >= 90 ? 'Starke Woche – alles erledigt.' : pct >= 70 ? 'Gute Woche, der Plan steigert weiter.' : 'Weniger geschafft als geplant – der Umfang wird diese Woche gehalten.';
+  mount('week-review', el('div', { class: 'card' }, [
+    el('div', { class: 'card-head', style: 'margin:0' }, [
+      el('h2', {}, `Rückblick KW ${kw}`),
+      el('button', { class: 'link-btn', type: 'button', onclick: () => { try { localStorage.setItem('reviewDismissed', r.weekStart); } catch (e) { /* egal */ } mount('week-review'); } }, 'Ausblenden')
+    ]),
+    el('div', { class: 'review-stats' }, [
+      el('div', {}, [el('div', { class: 'label' }, 'Einheiten'), el('div', { class: 'value' }, `${r.done}/${r.planned}`)]),
+      el('div', {}, [el('div', { class: 'label' }, 'Trainingszeit'), el('div', { class: 'value' }, fmtHours(r.minutes / 60))]),
+      el('div', {}, [el('div', { class: 'label' }, r.sleepAvg ? 'Ø Schlaf' : 'Ø Gefühl'), el('div', { class: 'value' }, r.sleepAvg ? fmtHours(r.sleepAvg) : r.rpeAvg ? `${fmtNum(r.rpeAvg, 1)}/10` : '–')])
+    ]),
+    el('div', { class: 'small' }, verdict + (r.missed.length ? ` Ausgelassen: ${r.missed.map((m) => m.replace('WeightTraining', 'Kraft').replace('Ride', 'Rad').replace('Run', 'Lauf').replace('Swim', 'Schwimmen')).join(', ')}.` : '')),
+    r.next && r.next.reason ? el('div', { class: 'plan-reason' }, ['Diese Woche: ', r.next.reason]) : null
+  ]));
 }
 
 function renderRpePrompt() {
@@ -1424,6 +1485,8 @@ function setupActivityUi() {
   });
   setupGoalForm();
   setupPerfForm();
+  setupRaceForm();
+  setupAbsenceForm();
   const sdDialog = document.getElementById('session-detail-dialog');
   document.getElementById('close-session-detail-btn').addEventListener('click', () => sdDialog.close());
   loadSpontanPrefs();
@@ -1579,6 +1642,152 @@ function openSettings(section) {
   if (section === 'perf') setTimeout(() => document.getElementById('perf-section').scrollIntoView({ block: 'start' }), 50);
 }
 
+// ---------------------------------------------------------------------------
+// Morgen-Erinnerung (Web Push)
+// ---------------------------------------------------------------------------
+
+function b64urlToUint8(s) {
+  const pad = '='.repeat((4 - (s.length % 4)) % 4);
+  const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function currentPushSub() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return await reg.pushManager.getSubscription();
+  } catch (e) { return null; }
+}
+
+async function renderPushCard() {
+  const ps = currentState.pushSettings || {};
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if (!supported) {
+    mount('push-card', el('div', { class: 'muted small' }, 'Auf dem iPhone funktioniert die Erinnerung nur in der App vom Home-Bildschirm (iOS 16.4 oder neuer). Öffne die App über das Symbol auf dem Home-Bildschirm und schau hier noch einmal.'));
+    return;
+  }
+  const sub = await currentPushSub();
+  const active = !!sub && Notification.permission === 'granted' && ps.enabled;
+  const time = el('input', { type: 'time', value: ps.time || '07:00', style: 'flex:1' });
+  const status = el('div', { class: 'muted small', style: 'margin-top:8px' });
+  const btn = (label, cls, fn) => el('button', { type: 'button', class: cls, onclick: async (e) => {
+    e.target.disabled = true;
+    try { await fn(); } catch (err) { status.textContent = err.message; } finally { e.target.disabled = false; }
+  } }, label);
+  const enable = async () => {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('Mitteilungen wurden nicht erlaubt. Ändern unter iPhone-Einstellungen → Mitteilungen → Trainingsanalyse.');
+    const reg = await navigator.serviceWorker.ready;
+    const s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToUint8(ps.publicKey) });
+    await postJson('/api/push/subscribe', { subscription: s.toJSON(), time: time.value });
+    await refresh();
+  };
+  mount('push-card',
+    el('div', { class: 'status-row' }, [el('span', { class: 'dot', style: `background:${active ? 'var(--good)' : 'var(--muted)'}` }), active ? `Aktiv – jeden Morgen um ${ps.time} Uhr` : 'Aus']),
+    el('p', { class: 'muted small' }, 'Jeden Morgen eine Mitteilung mit deinem Training und Zielpuls. Ist deine Erholung eingeschränkt, steht direkt die lockere Variante drin.'),
+    el('div', { class: 'btn-row' }, [
+      time,
+      active
+        ? btn('Uhrzeit speichern', 'secondary-btn', async () => { await postJson('/api/push/settings', { time: time.value }); status.textContent = 'Gespeichert.'; await refresh(); })
+        : btn('Aktivieren', 'primary-btn', enable)
+    ]),
+    active ? el('div', { class: 'btn-row', style: 'margin-top:8px' }, [
+      btn('Test senden', 'secondary-btn', async () => { const r = await postJson('/api/push/test', {}); status.textContent = r.sent ? 'Gesendet – kommt gleich an.' : 'Senden fehlgeschlagen.'; }),
+      btn('Ausschalten', 'secondary-btn', async () => { await postJson('/api/push/settings', { enabled: false, removeEndpoint: sub.endpoint }); await sub.unsubscribe(); await refresh(); })
+    ]) : null,
+    status
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Laufschuhe
+// ---------------------------------------------------------------------------
+
+function renderShoes() {
+  const shoes = currentState.shoes || [];
+  const name = el('input', { type: 'text', placeholder: 'z.B. Pegasus 41', maxlength: '40' });
+  const startKm = el('input', { type: 'number', inputmode: 'numeric', placeholder: 'bisher km', min: '0' });
+  const limit = el('input', { type: 'number', inputmode: 'numeric', value: '700', min: '200', max: '2000' });
+  const act = async (payload) => { try { await postJson('/api/shoes', payload); await refresh(); } catch (e) { alert(e.message); } };
+  mount('shoe-card',
+    ...shoes.filter((s) => !s.retired).map((s) => {
+      const pct = Math.min(100, (s.km / s.limitKm) * 100);
+      return el('div', { class: 'shoe-row' }, [
+        el('div', { class: 'top' }, [
+          el('span', {}, [el('strong', {}, s.name), s.isDefault ? el('span', { class: 'muted small' }, ' · Standard') : null]),
+          el('span', { class: 'race-right' }, `${s.km} / ${s.limitKm} km`)
+        ]),
+        el('div', { class: 'shoe-bar' }, el('span', { class: pct >= 100 ? 'over' : pct >= 85 ? 'warn' : '', style: `width:${pct}%` })),
+        el('div', { class: 'btn-row', style: 'margin-top:6px;gap:14px' }, [
+          s.isDefault ? null : el('button', { class: 'link-btn', type: 'button', onclick: () => act({ action: 'default', id: s.id }) }, 'Als Standard'),
+          el('button', { class: 'link-btn', type: 'button', onclick: () => act({ action: 'retire', id: s.id }) }, 'Ausmustern')
+        ])
+      ]);
+    }),
+    shoes.some((s) => s.retired) ? el('div', { class: 'muted small', style: 'margin-top:6px' }, `Ausgemustert: ${shoes.filter((s) => s.retired).map((s) => `${s.name} (${s.km} km)`).join(', ')}`) : null,
+    el('p', { class: 'muted small' }, 'Neue Läufe zählen automatisch für den Standardschuh. Im Detail eines Laufs kannst du einen anderen Schuh wählen. Laufschuhe dämpfen nach etwa 600–800 km spürbar schlechter.'),
+    el('div', { class: 'absence-grid' }, [name, startKm]),
+    el('div', { class: 'btn-row', style: 'margin-top:8px' }, [
+      el('label', { class: 'small muted', style: 'display:flex;align-items:center;gap:6px;flex:1' }, ['Limit', limit, 'km']),
+      el('button', { class: 'secondary-btn', type: 'button', onclick: () => act({ action: 'save', shoe: { name: name.value, startKm: startKm.value, limitKm: limit.value } }) }, 'Schuh hinzufügen')
+    ])
+  );
+}
+
+function renderShoeAlert() {
+  const s = (currentState.shoes || []).find((x) => x.isDefault && !x.retired && x.km >= x.limitKm * 0.9);
+  if (!s) { mount('shoe-alert'); return; }
+  mount('shoe-alert', el('div', { class: 'rec-note', style: 'margin:0' },
+    `Dein Laufschuh „${s.name}“ hat ${s.km} km – ${s.km >= s.limitKm ? 'Zeit für ein neues Paar' : 'bald Zeit für ein neues Paar'}. Ein zweites Paar im Wechsel schont Schuh und Beine.`));
+}
+
+function shoeEditor(act) {
+  if (!['Run', 'TrailRun'].includes(act.type)) return null;
+  const shoes = (currentState.shoes || []).filter((s) => !s.retired || s.id === act.shoeId);
+  if (!shoes.length) return null;
+  const def = shoes.find((s) => s.isDefault);
+  const sel = el('select', {}, [
+    el('option', { value: '' }, def ? `Standard (${def.name})` : 'kein Schuh'),
+    ...shoes.map((s) => el('option', { value: s.id }, s.name))
+  ]);
+  sel.value = act.shoeId || '';
+  sel.addEventListener('change', async () => {
+    try { await postJson('/api/activities/shoe', { id: act.id, shoeId: sel.value || null }); act.shoeId = sel.value || undefined; await refresh(); } catch (e) { alert(e.message); }
+  });
+  return el('div', { style: 'margin-top:18px;padding-top:14px;border-top:1px solid var(--border)' }, [
+    el('div', { class: 'label muted small', style: 'margin-bottom:6px' }, 'Laufschuh'), sel
+  ]);
+}
+
+function renderAutoBackup() {
+  const b = currentState.backup || {};
+  if (!b.enabled) {
+    mount('auto-backup', el('details', {}, [
+      el('summary', { class: 'small' }, 'Automatisches Backup einrichten (wöchentlich zu GitHub)'),
+      el('ol', { class: 'small', style: 'color:var(--text-2);line-height:1.5;padding-left:18px' }, [
+        el('li', {}, 'Auf github.com ein neues privates Repository anlegen, z.B. „trainingsanalyse-backup“.'),
+        el('li', {}, 'Unter Settings → Developer settings → Fine-grained tokens einen Token erstellen: nur dieses Repo, Berechtigung „Contents: Read and write“.'),
+        el('li', {}, 'Bei Render unter Environment zwei Variablen anlegen: GITHUB_BACKUP_REPO = benutzer/trainingsanalyse-backup und GITHUB_BACKUP_TOKEN = der Token.'),
+        el('li', {}, 'Danach sichert die App einmal pro Woche automatisch.')
+      ])
+    ]));
+    return;
+  }
+  const status = el('div', { class: 'muted small', style: 'margin-top:6px' });
+  mount('auto-backup',
+    el('div', { class: 'status-row' }, [
+      el('span', { class: 'dot', style: `background:${b.lastError ? 'var(--warning)' : b.lastAt ? 'var(--good)' : 'var(--muted)'}` }),
+      b.lastAt ? `Automatisches Backup aktiv · zuletzt ${relativeTime(b.lastAt)}` : 'Automatisches Backup eingerichtet, noch keins erstellt'
+    ]),
+    b.lastError ? el('div', { class: 'small', style: 'color:var(--warning);margin-top:4px' }, `Letzter Fehler: ${b.lastError}`) : null,
+    el('button', { class: 'secondary-btn', type: 'button', style: 'margin-top:8px', onclick: async (e) => {
+      e.target.disabled = true;
+      try { await postJson('/api/backup/run', {}); status.textContent = 'Gesichert ✓'; await refresh(); } catch (err) { status.textContent = err.message; } finally { e.target.disabled = false; }
+    } }, 'Jetzt sichern'),
+    status
+  );
+}
+
 // Leistung: Lauf-Bestzeit und FTP
 function renderPerfForm() {
   const p = currentState.performance || {};
@@ -1645,35 +1854,187 @@ function setupPerfForm() {
   });
 }
 
-// Kopf des Ziel-Tabs: Countdown und aktuelle Phase
+// ---------------------------------------------------------------------------
+// Tab "Ziel": Hauptwettkampf, Wettkampfliste (A/B/C), Krank/Urlaub
+// ---------------------------------------------------------------------------
+
+const DIST_LABELS = {
+  run5k: '5-km-Lauf', run10k: '10-km-Lauf', runHalf: 'Halbmarathon', marathon: 'Marathon',
+  sprint: 'Sprint-Triathlon', olympic: 'Olympische Distanz', half: 'Mitteldistanz', full: 'Langdistanz'
+};
+const PRIO_CHIP = { A: 'solid-warning', B: 'solid-good', C: 'solid-muted' };
+
+function daysUntil(dateKey) {
+  return Math.round((new Date(dateKey + 'T12:00:00') - new Date(localKey(new Date()) + 'T12:00:00')) / 86400000);
+}
+function fmtDateShort(key) {
+  return new Date(key + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric', year: '2-digit' });
+}
+
 function renderGoalSummary() {
   const g = currentState.goal || {};
   const d = (currentState.plan && currentState.plan.lastDecision) || {};
-  const distSel = document.getElementById('goal-distance');
-  const opt = distSel ? [...distSel.options].find((o) => o.value === g.distance) : null;
-  const distLabel = opt ? opt.textContent.replace(/\s*\(.*\)$/, '') : '';
-  if (!g.date || g.distance === 'none') {
-    document.getElementById('goal-eyebrow').textContent = 'Saisonziel & Trainingszeit';
+  const races = currentState.races || [];
+  const main = races.find((r) => r.id === g.raceId);
+  if (!main) {
+    const next = races.find((r) => daysUntil(r.date) >= 0);
+    document.getElementById('goal-eyebrow').textContent = next ? `nächster Wettkampf in ${daysUntil(next.date)} Tagen` : 'Wettkämpfe & Trainingszeit';
     mount('goal-summary', el('div', { class: 'card' }, [
-      el('div', { class: 'card-head', style: 'margin:0 0 6px' }, [el('h2', {}, 'Kein Wettkampf eingetragen')]),
-      el('div', { class: 'muted small' }, 'Ohne Wettkampf trainierst du in der Grundlage mit regelmäßigen Entlastungswochen. Trag unten einen Wettkampf ein, dann plant die App die Phasen bis dorthin.')
+      el('div', { class: 'card-head', style: 'margin:0 0 6px' }, [el('h2', {}, 'Kein A-Wettkampf')]),
+      el('div', { class: 'muted small' }, 'Ohne Saisonhöhepunkt trainierst du in der Grundlage mit regelmäßigen Entlastungswochen. Leg unten einen A-Wettkampf an, dann plant die App die Phasen bis dorthin.')
     ]));
     return;
   }
-  const days = Math.round((new Date(g.date + 'T12:00:00') - new Date(localKey(new Date()) + 'T12:00:00')) / 86400000);
+  const days = daysUntil(main.date);
   document.getElementById('goal-eyebrow').textContent = days >= 0 ? `noch ${days} ${days === 1 ? 'Tag' : 'Tage'}` : 'Wettkampf vorbei';
-  mount('goal-summary', el('div', { class: 'card' }, [
+  const info = main.info;
+  const nodes = [
     el('div', { class: 'card-head', style: 'margin:0 0 10px' }, [
-      el('div', { class: 'head-with-info' }, [el('span', { 'aria-hidden': 'true', style: 'color:#f5b544', html: FLAG_ICON }), el('h2', {}, g.name || distLabel || 'Wettkampf')]),
+      el('div', { class: 'head-with-info' }, [el('span', { 'aria-hidden': 'true', style: 'color:#f5b544', html: FLAG_ICON }), el('h2', {}, main.name || DIST_LABELS[main.distance])]),
       d.phaseLabel ? el('span', { class: `chip ${PHASE_CHIP[d.phase] || 'solid-muted'}` }, d.phaseLabel) : null
     ]),
     el('div', { class: 'plan-stats' }, [
-      el('div', {}, [el('div', { class: 'label' }, 'Datum'), el('div', { class: 'value' }, new Date(g.date + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric', year: '2-digit' }))]),
+      el('div', {}, [el('div', { class: 'label' }, 'Datum'), el('div', { class: 'value' }, fmtDateShort(main.date))]),
       el('div', {}, [el('div', { class: 'label' }, 'Wochen'), el('div', { class: 'value' }, days >= 0 ? String(Math.ceil(days / 7)) : '–')])
     ]),
-    el('div', { class: 'muted small', style: 'margin-top:8px' }, [distLabel, `${g.weeklyHours} h pro Woche`].filter(Boolean).join(' · ')),
-    d.phaseText ? el('div', { class: 'plan-reason' }, d.phaseText) : null
-  ]));
+    el('div', { class: 'muted small', style: 'margin-top:8px' }, [DIST_LABELS[main.distance], `${g.weeklyHours} h pro Woche`].join(' · '))
+  ];
+  if (info && (info.predicted || info.target)) {
+    let verdict = null;
+    if (info.gapSec !== null && info.gapSec !== undefined) {
+      const m = Math.round(Math.abs(info.gapSec) / 60);
+      verdict = info.gapSec <= 0
+        ? el('span', { style: 'color:var(--good)' }, ' · auf Kurs ✓')
+        : el('span', { style: 'color:var(--warning)' }, ` · noch ${m} min schneller nötig`);
+    }
+    nodes.push(el('div', { class: 'goal-prognosis' }, [
+      info.target ? el('div', {}, [el('div', { class: 'label' }, 'Zielzeit'), el('div', { class: 'value' }, info.target)]) : null,
+      info.predicted ? el('div', {}, [el('div', { class: 'label' }, 'Prognose heute'), el('div', { class: 'value' }, info.predicted)]) : null,
+      info.racePace ? el('div', {}, [el('div', { class: 'label' }, 'Renntempo'), el('div', { class: 'value' }, `${info.racePace}`)]) : null
+    ]));
+    if (verdict) nodes.push(el('div', { class: 'small', style: 'margin-top:6px' }, ['Prognose aus deiner aktuellen Bestzeit', verdict]));
+    if (info.pacing) nodes.push(pacingDetails(info.pacing));
+  }
+  if (d.phaseText) nodes.push(el('div', { class: 'plan-reason' }, d.phaseText));
+  mount('goal-summary', el('div', { class: 'card' }, nodes));
+}
+
+function pacingDetails(p) {
+  return el('details', { class: 'pacing' }, [
+    el('summary', {}, 'Pacing-Plan fürs Rennen'),
+    el('p', { class: 'small', style: 'color:var(--text-2);line-height:1.45' },
+      `Erste ${String(p.startKm).replace('.', ',')} km bewusst ruhig in ${p.start} /km, dann gleichmäßig ${p.middle} /km. Auf den letzten ${String(p.finishKm).replace('.', ',')} km darfst du auf ${p.finish} /km und schneller gehen, wenn es sich gut anfühlt. Zu schnell starten kostet hinten ein Vielfaches.`),
+    el('div', { class: 'splits' }, p.splits.map((x) => el('div', {}, [el('span', { class: 'muted' }, `km ${String(x.km).replace('.', ',')}`), el('span', {}, x.time)])))
+  ]);
+}
+
+function renderRaces() {
+  const races = currentState.races || [];
+  const box = mount('race-list');
+  if (!races.length) {
+    box.appendChild(el('div', { class: 'muted small' }, 'Noch keine Wettkämpfe. Tipp auf „+ Wettkampf“.'));
+    return;
+  }
+  for (const r of races) {
+    const days = daysUntil(r.date);
+    const past = days < 0;
+    const sub = [fmtDateShort(r.date), DIST_LABELS[r.distance]];
+    if (r.info && r.info.target) sub.push(`Ziel ${r.info.target}`);
+    let right = past ? (r.result ? `✓ ${fmtClock(r.result.timeSec)}` : 'vorbei') : `${days} T.`;
+    box.appendChild(el('button', { class: `race-row${past ? ' past' : ''}`, type: 'button', onclick: () => openRaceForm(r) }, [
+      el('span', { class: `chip ${PRIO_CHIP[r.priority] || 'solid-muted'} prio` }, r.priority),
+      el('div', { class: 'txt' }, [el('div', { class: 't1' }, r.name || DIST_LABELS[r.distance]), el('div', { class: 't2' }, sub.join(' · '))]),
+      el('span', { class: 'race-right' }, right)
+    ]));
+  }
+  if (races.some((r) => r.result)) {
+    box.appendChild(el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Laufergebnisse übernimmt die App automatisch als neue Bestzeit für deine Tempo-Vorgaben.'));
+  }
+}
+
+function openRaceForm(r) {
+  const f = document.getElementById('race-form');
+  f.hidden = false;
+  document.getElementById('race-id').value = r ? r.id : '';
+  document.getElementById('race-name').value = r ? r.name || '' : '';
+  document.getElementById('race-date').value = r ? r.date : '';
+  document.getElementById('race-distance').value = r ? r.distance : 'run10k';
+  document.getElementById('race-priority').value = r ? r.priority : ((currentState.races || []).some((x) => x.priority === 'A' && daysUntil(x.date) >= 0) ? 'B' : 'A');
+  document.getElementById('race-target').value = r && r.targetTimeSec ? fmtClock(r.targetTimeSec) : '';
+  document.getElementById('race-delete-btn').hidden = !r;
+  updateRaceTargetRow();
+  f.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function updateRaceTargetRow() {
+  const run = ['run5k', 'run10k', 'runHalf', 'marathon'].includes(document.getElementById('race-distance').value);
+  document.getElementById('race-target-row').hidden = !run;
+}
+
+async function postJson(url, payload) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || 'Server-Fehler');
+  return body;
+}
+
+function setupRaceForm() {
+  const f = document.getElementById('race-form');
+  document.getElementById('add-race-btn').addEventListener('click', () => openRaceForm(null));
+  document.getElementById('race-cancel-btn').addEventListener('click', () => { f.hidden = true; });
+  document.getElementById('race-distance').addEventListener('change', updateRaceTargetRow);
+  document.getElementById('race-delete-btn').addEventListener('click', async () => {
+    if (!confirm('Diesen Wettkampf löschen?')) return;
+    try {
+      await postJson('/api/races', { action: 'delete', id: document.getElementById('race-id').value });
+      f.hidden = true;
+      await refresh();
+    } catch (e) { alert(e.message); }
+  });
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const race = {
+      id: document.getElementById('race-id').value || null,
+      name: document.getElementById('race-name').value.trim(),
+      date: document.getElementById('race-date').value,
+      distance: document.getElementById('race-distance').value,
+      priority: document.getElementById('race-priority').value,
+      targetTime: document.getElementById('race-target-row').hidden ? '' : document.getElementById('race-target').value.trim()
+    };
+    try {
+      await postJson('/api/races', { action: 'save', race });
+      f.hidden = true;
+      await refresh();
+    } catch (err) { alert('Speichern fehlgeschlagen: ' + err.message); }
+  });
+}
+
+function renderAbsences() {
+  const list = (currentState.absences || []).filter((a) => daysUntil(a.to) >= -30);
+  mount('absence-list', ...list.map((a) => el('div', { class: 'absence-row' }, [
+    el('span', { class: `chip ${a.type === 'krank' ? 'solid-danger' : 'solid-muted'}` }, a.type === 'krank' ? 'krank' : 'Urlaub'),
+    el('span', { class: 'txt' }, a.from === a.to ? fmtDateShort(a.from) : `${fmtDateShort(a.from)} – ${fmtDateShort(a.to)}`),
+    el('button', { class: 'link-btn', type: 'button', onclick: async () => {
+      try { await postJson('/api/absences', { action: 'delete', id: a.id }); await refresh(); } catch (e) { alert(e.message); }
+    } }, 'Entfernen')
+  ])));
+}
+
+function setupAbsenceForm() {
+  document.getElementById('absence-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const absence = {
+      from: document.getElementById('abs-from').value,
+      to: document.getElementById('abs-to').value || document.getElementById('abs-from').value,
+      type: document.getElementById('abs-type').value
+    };
+    try {
+      await postJson('/api/absences', { action: 'save', absence });
+      document.getElementById('abs-from').value = '';
+      document.getElementById('abs-to').value = '';
+      await refresh();
+    } catch (err) { alert('Speichern fehlgeschlagen: ' + err.message); }
+  });
 }
 
 // Saisonziel-Formular
@@ -1682,9 +2043,6 @@ function renderGoalForm() {
   const g = currentState.goal || {};
   const form = document.getElementById('goal-form');
   if (!form.contains(document.activeElement)) {
-    document.getElementById('goal-name').value = g.name || '';
-    document.getElementById('goal-date').value = g.date || '';
-    document.getElementById('goal-distance').value = g.distance || 'olympic';
     document.getElementById('goal-hours').value = g.weeklyHours || 6;
     document.getElementById('goal-strength').value = String(g.strengthPerWeek ?? 2);
     document.getElementById('goal-mobility').value = String(g.mobilityPerWeek ?? 2);
@@ -1709,17 +2067,11 @@ function setupGoalForm() {
     e.preventDefault();
     const btn = e.submitter;
     const goal = {
-      name: document.getElementById('goal-name').value.trim(),
-      date: document.getElementById('goal-date').value || null,
-      distance: document.getElementById('goal-distance').value,
       weeklyHours: Number(document.getElementById('goal-hours').value) || 6,
       strengthPerWeek: Number(document.getElementById('goal-strength').value),
       mobilityPerWeek: Number(document.getElementById('goal-mobility').value),
       restDays: goalRestDays
     };
-    if (goal.date && goal.date < localKey(new Date())) {
-      if (!confirm('Das Datum liegt in der Vergangenheit. Trotzdem speichern?')) return;
-    }
     btn.disabled = true;
     try {
       const res = await fetch('/api/settings', {
@@ -1744,7 +2096,12 @@ function renderSettings() {
   renderLibrary();
   renderGoalForm();
   renderGoalSummary();
+  renderRaces();
+  renderAbsences();
   renderPerfForm();
+  renderPushCard();
+  renderShoes();
+  renderAutoBackup();
   const a = currentState.athlete;
   const form = document.getElementById('settings-form');
   if (!form.contains(document.activeElement)) {

@@ -258,7 +258,95 @@ function trends(store, now = new Date(), count = 26) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Wettkämpfe: Prognose, Pacing-Plan, Ergebnisse
+// ---------------------------------------------------------------------------
+
+const RACE_METERS = { run5k: 5000, run10k: 10000, runHalf: 21097.5, marathon: 42195 };
+const RACE_TO_TEST = { run5k: '5k', run10k: '10k', runHalf: 'half', marathon: 'marathon' };
+
+function predictRace(tenKSec, distance) {
+  const m = RACE_METERS[distance];
+  if (!tenKSec || !m) return null;
+  return Math.round(riegel(tenKSec, 10000, m) * (distance === 'marathon' ? 1.03 : 1));
+}
+
+// Gleichmäßiges Pacing mit vorsichtigem Start: erste 15 % etwas langsamer,
+// letzte 15 % darf es schneller werden, Mitte gleichmäßig – Summe = Zielzeit.
+function pacingPlan(distance, timeSec) {
+  const m = RACE_METERS[distance];
+  if (!m || !timeSec) return null;
+  const km = m / 1000;
+  const p = timeSec / km;
+  const d1 = km * 0.15;
+  const d3 = km * 0.15;
+  const d2 = km - d1 - d3;
+  const p1 = p * 1.015;
+  const p3 = p * 0.99;
+  const p2 = (timeSec - d1 * p1 - d3 * p3) / d2;
+  const timeAt = (x) => (x <= d1 ? x * p1 : x <= d1 + d2 ? d1 * p1 + (x - d1) * p2 : d1 * p1 + d2 * p2 + (x - d1 - d2) * p3);
+  const step = km <= 10 ? 1 : 5;
+  const splits = [];
+  for (let x = step; x < km - 0.01; x += step) splits.push({ km: x, time: formatTime(timeAt(x)) });
+  splits.push({ km: Math.round(km * 10) / 10, time: formatTime(timeSec) });
+  return {
+    pace: formatPace(p),
+    start: formatPace(p1),
+    middle: formatPace(p2),
+    finish: formatPace(p3),
+    startKm: Math.round(d1 * 10) / 10,
+    finishKm: Math.round(d3 * 10) / 10,
+    splits
+  };
+}
+
+// Prognose und Pacing für einen Laufwettkampf
+function raceInfo(store, race) {
+  if (!RACE_METERS[race.distance]) return null;
+  const perf = runPerformance(store);
+  const predictedSec = perf ? predictRace(perf.tenKSec, race.distance) : null;
+  const targetSec = race.targetTimeSec || null;
+  const planSec = targetSec || predictedSec;
+  return {
+    predictedSec,
+    predicted: predictedSec ? formatTime(predictedSec) : null,
+    target: targetSec ? formatTime(targetSec) : null,
+    gapSec: targetSec && predictedSec ? predictedSec - targetSec : null,
+    racePace: planSec ? formatPace(planSec / (RACE_METERS[race.distance] / 1000)) : null,
+    pacing: planSec ? pacingPlan(race.distance, planSec) : null
+  };
+}
+
+// Ergebnisse vergangener Laufwettkämpfe aus den Aktivitäten übernehmen und
+// daraus die Bestzeit (Grundlage der Tempo-Vorgaben) aktualisieren.
+function updateRaceResults(store, todayKey) {
+  const a = store.athlete;
+  let changed = false;
+  for (const r of a.races || []) {
+    if (r.result || r.date >= todayKey || !RACE_METERS[r.distance]) continue;
+    const m = RACE_METERS[r.distance];
+    const act = (store.activities || []).find((x) => ['Run', 'TrailRun'].includes(x.type)
+      && analysis.dayKeyOf(new Date(x.startDate)) === r.date
+      && x.distanceMeters >= m * 0.93 && x.distanceMeters <= m * 1.1);
+    if (!act) continue;
+    // Zeit auf die offizielle Distanz umrechnen (GPS misst oft etwas mehr)
+    const timeSec = Math.round(act.movingTimeSec * (m / act.distanceMeters));
+    r.result = { timeSec, activityId: act.id };
+    changed = true;
+    const test = RACE_TO_TEST[r.distance];
+    if (!a.runTest || !a.runTest.date || a.runTest.date <= r.date) {
+      a.runTest = { distance: test, timeSec, date: r.date, source: 'race', raceName: r.name || null };
+    }
+  }
+  return changed;
+}
+
 module.exports = {
+  RACE_METERS,
+  predictRace,
+  pacingPlan,
+  raceInfo,
+  updateRaceResults,
   RUN_DISTANCES,
   RUN_DISTANCE_LABEL,
   parseTime,
