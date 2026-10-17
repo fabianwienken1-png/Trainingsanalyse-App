@@ -41,6 +41,11 @@
       <div id="plan-suggestion"></div>
       <div id="stat-tiles" class="tiles"></div>
       <div id="week-card"></div>
+      <button class="card spontan-btn" id="open-spontan-btn" type="button">
+        <span class="sport-icon" style="background:#2b3a12;color:var(--accent)" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></span>
+        <span class="txt"><span class="t1">Spontan trainieren</span><span class="t2">Was passt jetzt zu deiner Form?</span></span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9a9da3" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
       <div id="next-session"></div>
       <div id="sync-line"></div>
     </div>
@@ -245,6 +250,25 @@
       <button type="submit" class="primary-btn">Speichern</button>
     </div>
   </form>
+</dialog>
+
+<!-- ============ SPONTAN TRAINIEREN ============ -->
+<dialog id="spontan-dialog" class="sheet">
+  <div class="sheet-header">
+    <h2>Spontan trainieren</h2>
+    <button class="pill-btn" id="close-spontan-btn" type="button">Schließen</button>
+  </div>
+  <div class="sheet-body">
+    <div>
+      <h3 class="section-title" style="margin-top:0">Wie viel Zeit hast du?</h3>
+      <div class="chip-row" id="spontan-minutes" role="group" aria-label="Verfügbare Zeit"></div>
+    </div>
+    <div>
+      <h3 class="section-title" style="margin-top:4px">Sportart</h3>
+      <div class="chip-row" id="spontan-sport" role="group" aria-label="Sportart"></div>
+    </div>
+    <div id="spontan-result" aria-live="polite"></div>
+  </div>
 </dialog>
 
 <!-- ============ ERKLÄRUNG KENNZAHL ============ -->

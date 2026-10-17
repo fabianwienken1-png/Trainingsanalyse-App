@@ -585,6 +585,119 @@ async function onAdjustSession(sessionId, action, reason) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Spontan trainieren
+// ---------------------------------------------------------------------------
+
+const SPONTAN_MINUTES = [30, 45, 60, 90, 120];
+const SPONTAN_SPORTS = [
+  { key: '', label: 'Vorschlag' },
+  { key: 'swim', label: 'Schwimmen', color: '#5cc8f2' },
+  { key: 'bike', label: 'Rad', color: '#f28c5c' },
+  { key: 'run', label: 'Lauf', color: '#d4f25c' },
+  { key: 'strength', label: 'Kraft', color: '#b79cf2' }
+];
+const INTENSITY_CHIP = { rest: 'solid-muted', easy: 'outline-good', moderate: 'solid-warning', hard: 'solid-danger' };
+const spontan = { minutes: 45, sport: '', reqId: 0 };
+
+function loadSpontanPrefs() {
+  try {
+    const m = Number(localStorage.getItem('spontan-minutes'));
+    if (SPONTAN_MINUTES.includes(m)) spontan.minutes = m;
+  } catch (e) { /* egal */ }
+}
+
+function renderSpontanChips() {
+  mount('spontan-minutes', ...SPONTAN_MINUTES.map((m) => el('button', {
+    class: 'filter-chip', type: 'button', 'aria-pressed': String(spontan.minutes === m),
+    onclick: () => {
+      spontan.minutes = m;
+      try { localStorage.setItem('spontan-minutes', String(m)); } catch (e) { /* egal */ }
+      renderSpontanChips();
+      loadSpontan();
+    }
+  }, m >= 60 ? `${m / 60 % 1 ? (m / 60).toString().replace('.', ',') : m / 60} h` : `${m} min`)));
+  mount('spontan-sport', ...SPONTAN_SPORTS.map((sp) => el('button', {
+    class: 'filter-chip', type: 'button', 'aria-pressed': String(spontan.sport === sp.key),
+    onclick: () => { spontan.sport = sp.key; renderSpontanChips(); loadSpontan(); }
+  }, [sp.color ? el('span', { class: 'dot', style: `background:${sp.color}` }) : null, sp.label])));
+}
+
+function openSpontan() {
+  renderSpontanChips();
+  document.getElementById('spontan-dialog').showModal();
+  loadSpontan();
+}
+
+async function loadSpontan() {
+  const id = ++spontan.reqId;
+  const box = document.getElementById('spontan-result');
+  box.style.opacity = '0.5';
+  try {
+    const params = new URLSearchParams({ minutes: String(spontan.minutes) });
+    if (spontan.sport) params.set('sport', spontan.sport);
+    const data = await fetchJson('/api/suggest?' + params.toString(), 'Vorschlag konnte nicht geladen werden');
+    if (id !== spontan.reqId) return;
+    renderSpontanResult(data);
+  } catch (err) {
+    if (id === spontan.reqId) mount('spontan-result', el('div', { class: 'card muted' }, err.message));
+  } finally {
+    if (id === spontan.reqId) box.style.opacity = '1';
+  }
+}
+
+function spontanIcon(w) {
+  if (w.sport === 'rest') return el('div', { class: 'sport-icon', style: 'background:#23203a;color:#9b8cf2', html: MOON_ICON });
+  const g = SPORT_GROUPS.find((x) => x.key === w.sport) || SPORT_GROUPS[SPORT_GROUPS.length - 1];
+  return sportIcon(g);
+}
+
+function renderSpontanResult(data) {
+  const w = data.primary;
+  const nodes = [];
+  if (data.plannedToday) {
+    nodes.push(el('div', { class: 'rec-note', style: 'margin:0' },
+      `Heute steht schon ${sportLabel(data.plannedToday.sport)} (${INTENSITY_LABELS[data.plannedToday.intensity] || ''}, ${data.plannedToday.durationMin} min) im Plan. Wenn du nur einmal trainierst, hat die Plan-Einheit Vorrang.`));
+  }
+  const meta = [`${w.minutes} min`, w.distance ? `ca. ${w.distance.toLocaleString('de-DE')} m` : null].filter(Boolean).join(' · ');
+  nodes.push(el('div', { class: 'card spontan-card' }, [
+    el('div', { class: 'spontan-head' }, [
+      spontanIcon(w),
+      el('div', { class: 'txt' }, [
+        el('div', { class: 'small muted' }, w.sportLabel),
+        el('div', { class: 'spontan-title' }, w.title),
+        el('div', { class: 'small muted' }, meta)
+      ]),
+      el('span', { class: `chip ${INTENSITY_CHIP[w.intensity] || 'solid-muted'}` }, w.intensityLabel)
+    ]),
+    el('ol', { class: 'steps' }, w.steps.map((st) => el('li', {}, [
+      el('span', { class: 'step-label' }, st.label),
+      el('span', { class: 'step-text' }, st.text)
+    ]))),
+    w.why && w.why.length ? el('div', { class: 'why' }, [
+      el('div', { class: 'small muted', style: 'margin-bottom:6px' }, 'Warum dieser Vorschlag?'),
+      el('ul', {}, w.why.map((r) => el('li', {}, r.charAt(0).toUpperCase() + r.slice(1))))
+    ]) : null
+  ]));
+  if (data.alternatives && data.alternatives.length) {
+    nodes.push(el('h3', { class: 'section-title', style: 'margin-top:4px' }, w.sport === 'rest' ? 'Falls du dich doch fit fühlst' : 'Alternativen'));
+    for (const alt of data.alternatives) {
+      nodes.push(el('button', {
+        class: 'card next-card', type: 'button', style: 'width:100%;text-align:left;color:inherit',
+        onclick: () => { spontan.sport = alt.sport; renderSpontanChips(); loadSpontan(); }
+      }, [
+        spontanIcon(alt),
+        el('div', { class: 'txt' }, [
+          el('div', { class: 't1' }, `${alt.sportLabel} · ${alt.intensityLabel} · ${alt.minutes} min`),
+          el('div', { class: 't2', style: 'font-size:15px' }, alt.title)
+        ]),
+        chevron()
+      ]));
+    }
+  }
+  mount('spontan-result', ...nodes);
+}
+
 const MOON_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>';
 
 function planWeekInfo() {
@@ -923,6 +1036,10 @@ function setupActivityUi() {
       renderActivities();
     }, 200);
   });
+  loadSpontanPrefs();
+  const spDialog = document.getElementById('spontan-dialog');
+  document.getElementById('open-spontan-btn').addEventListener('click', openSpontan);
+  document.getElementById('close-spontan-btn').addEventListener('click', () => spDialog.close());
   const infoDialog = document.getElementById('info-dialog');
   document.getElementById('close-info-btn').addEventListener('click', () => infoDialog.close());
   infoDialog.addEventListener('click', (e) => { if (e.target === infoDialog) infoDialog.close(); });

@@ -27,6 +27,7 @@ const healthImport = require('./health-import');
 const healthAutoExport = require('./health-auto-export');
 const dedupe = require('./dedupe');
 const recovery = require('./recovery');
+const spontaneous = require('./spontaneous');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -334,6 +335,16 @@ route('POST', '/api/activities/dedupe', async (req, res) => {
   if (removals.length) await saveStore(s);
   console.log(`[dedupe] ${removals.length} Eintrag/Einträge manuell bereinigt.`);
   sendJson(res, 200, { removed: removals.length, total: s.activities.length });
+});
+
+// Spontane Trainingsempfehlung (außerhalb des Wochenplans)
+// ?minutes=45&sport=run|bike|swim|strength (sport optional)
+route('GET', '/api/suggest', async (req, res, urlObj) => {
+  const s = await loadStore();
+  sendJson(res, 200, spontaneous.suggest(s, {
+    minutes: urlObj.searchParams.get('minutes'),
+    sport: urlObj.searchParams.get('sport')
+  }));
 });
 
 // Passt eine Plan-Einheit an die Erholung an (locker statt hart) oder macht das rückgängig

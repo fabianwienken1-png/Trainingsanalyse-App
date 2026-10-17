@@ -473,3 +473,21 @@ select {
 .session-actions button.accept { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .adjust-row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 .adjust-row .reset-btn { padding-top: 0; }
+
+/* ---------- Spontan trainieren ---------- */
+
+.spontan-btn { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; color: inherit; }
+.spontan-btn .txt { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.spontan-btn .t1 { font-size: 16px; font-weight: 600; }
+.spontan-btn .t2 { font-size: 13px; color: var(--muted); }
+#spontan-result { display: flex; flex-direction: column; gap: 10px; transition: opacity 0.15s; }
+.spontan-head { display: flex; align-items: center; gap: 14px; }
+.spontan-head .txt { flex: 1; min-width: 0; }
+.spontan-title { font-family: var(--font-num); font-weight: 700; font-size: 24px; line-height: 1.1; margin: 2px 0; }
+.steps { list-style: none; margin: 16px 0 0; padding: 14px 0 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; counter-reset: step; }
+.steps li { display: grid; grid-template-columns: 92px 1fr; gap: 12px; font-size: 15px; line-height: 1.35; }
+.step-label { font-family: var(--font-num); font-weight: 600; font-size: 17px; color: var(--text); }
+.step-text { color: var(--text-2); }
+.why { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); }
+.why ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.45; color: var(--text-2); }
+#spontan-minutes, #spontan-sport { margin: 0; padding: 0; flex-wrap: wrap; overflow: visible; }
