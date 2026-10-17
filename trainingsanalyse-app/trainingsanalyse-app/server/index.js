@@ -594,7 +594,7 @@ route('POST', '/api/settings', async (req, res) => {
     s.athlete.goal = {
       name: String(g.name || '').slice(0, 60),
       date,
-      distance: ['sprint', 'olympic', 'half', 'full', 'none'].includes(g.distance) ? g.distance : 'olympic',
+      distance: ['sprint', 'olympic', 'half', 'full', 'run10k', 'runHalf', 'marathon', 'none'].includes(g.distance) ? g.distance : 'olympic',
       weeklyHours: Math.min(25, Math.max(2, Number(g.weeklyHours) || 6)),
       strengthPerWeek: Math.min(3, Math.max(0, Math.round(Number(g.strengthPerWeek) || 0))),
       restDays: Array.isArray(g.restDays) ? [...new Set(g.restDays.map(Number).filter((d) => d >= 0 && d <= 6))].slice(0, 3) : [0]

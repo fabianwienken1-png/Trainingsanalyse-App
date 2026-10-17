@@ -68,6 +68,10 @@ const DISTANCES = {
   olympic: { label: 'Olympische Distanz', share: { swim: 0.22, bike: 0.43, run: 0.35 }, brick: 20 },
   half: { label: 'Mitteldistanz', share: { swim: 0.18, bike: 0.5, run: 0.32 }, brick: 30 },
   full: { label: 'Langdistanz', share: { swim: 0.16, bike: 0.52, run: 0.32 }, brick: 30 },
+  // Laufwettkämpfe: Laufen im Mittelpunkt, Rad/Schwimmen nur als lockeres Ausgleichstraining
+  run10k: { label: '10-km-Lauf', type: 'run', share: { swim: 0.1, bike: 0.2, run: 0.7 }, brick: 0, taperWeeks: 1, longCap: 90, raceMin: 55 },
+  runHalf: { label: 'Halbmarathon', type: 'run', share: { swim: 0.08, bike: 0.17, run: 0.75 }, brick: 0, taperWeeks: 2, longCap: 120, raceMin: 120 },
+  marathon: { label: 'Marathon', type: 'run', share: { swim: 0.05, bike: 0.15, run: 0.8 }, brick: 0, taperWeeks: 3, longCap: 150, raceMin: 240 },
   none: { label: 'Kein Wettkampf', share: { swim: 0.22, bike: 0.43, run: 0.35 }, brick: 0 }
 };
 
@@ -109,17 +113,26 @@ function phaseFor(goal, weekStartKey, weekIndex, deloadEvery) {
   if (goal.date && goal.distance !== 'none') {
     const weeksTo = weeksBetween(weekStartKey, mondayKeyOf(goal.date));
     let key;
+    const dist = DISTANCES[goal.distance] || {};
+    const taperWeeks = dist.taperWeeks || 2;
     if (weeksTo < -1) key = null;
     else if (weeksTo === -1) key = 'post';
     else if (weeksTo === 0) key = 'race';
-    else if (weeksTo <= 2) key = 'taper';
-    else if (weeksTo >= 6 && (weeksTo - 2) % 4 === 0) key = 'recovery';
+    else if (weeksTo <= taperWeeks) key = 'taper';
+    else if (weeksTo >= taperWeeks + 4 && (weeksTo - taperWeeks) % 4 === 0) key = 'recovery';
     else if (weeksTo <= 8) key = 'peak';
     else if (weeksTo <= 16) key = 'build';
     else key = 'base';
     if (key) {
       const ph = Object.assign({ key, weeksTo }, PHASES[key]);
-      if (key === 'taper') ph.volume = weeksTo === 1 ? 0.6 : 0.75;
+      if (key === 'taper') {
+        // 10 km: 1 Woche, Triathlon/Halbmarathon: 2 Wochen, Marathon: 3 Wochen
+        const curve = { 1: [0.65], 2: [0.6, 0.75], 3: [0.55, 0.7, 0.8] }[taperWeeks] || [0.6, 0.75];
+        ph.volume = curve[weeksTo - 1] || 0.75;
+      }
+      if (key === 'peak' && dist.type === 'run') {
+        ph.text = 'Wettkampfnahe Intensität: Tempoläufe im Renntempo und lange Läufe.';
+      }
       return ph;
     }
   }
@@ -216,8 +229,15 @@ function toBucket(sport, minutes) {
   return list.reduce((best, v) => (Math.abs(v - minutes) < Math.abs(best - minutes) ? v : best), list[0]);
 }
 
-function sessionCounts(enduranceMinutes) {
+function sessionCounts(enduranceMinutes, type) {
   const h = enduranceMinutes / 60;
+  if (type === 'run') {
+    // Laufziel: 3–5 Läufe, dazu 0–2 lockere Ausgleichseinheiten
+    if (h < 3) return { swim: 0, bike: 1, run: 3 };
+    if (h < 5) return { swim: 1, bike: 1, run: 4 };
+    if (h < 8) return { swim: 1, bike: 2, run: 5 };
+    return { swim: 2, bike: 2, run: 5 };
+  }
   if (h < 3) return { swim: 1, bike: 1, run: 1 };
   if (h < 4) return { swim: 1, bike: 1, run: 2 };
   if (h < 6) return { swim: 2, bike: 2, run: 2 };
@@ -227,7 +247,8 @@ function sessionCounts(enduranceMinutes) {
 
 function composeSessions(goal, phase, enduranceMinutes, weekIndex) {
   const dist = DISTANCES[goal.distance];
-  const counts = sessionCounts(enduranceMinutes / Math.max(0.4, phase.volume)); // Anzahl nach Grundumfang, nicht nach Entlastung
+  const isRun = dist.type === 'run';
+  const counts = sessionCounts(enduranceMinutes / Math.max(0.4, phase.volume), dist.type); // Anzahl nach Grundumfang, nicht nach Entlastung
   const list = [];
 
   for (const sport of ['swim', 'bike', 'run']) {
@@ -236,11 +257,13 @@ function composeSessions(goal, phase, enduranceMinutes, weekIndex) {
     const brick = sport === 'run' && phase.key === 'peak' && dist.brick > 0;
     if (brick) minutes -= dist.brick;
     while (n > 1 && minutes / n < MIN_DURATION[sport]) n--;
-    if (minutes < MIN_DURATION[sport] * 0.75) continue;
+    if (n === 0 || minutes < MIN_DURATION[sport] * 0.75) continue;
 
-    const longShare = sport === 'bike' ? (n === 2 ? 0.6 : 0.45) : sport === 'run' ? (n === 2 ? 0.55 : 0.4) : 0;
+    let longShare = sport === 'bike' ? (n === 2 ? 0.6 : 0.45) : sport === 'run' ? (n === 2 ? 0.55 : 0.4) : 0;
+    if (isRun) longShare = sport === 'run' ? (n <= 3 ? 0.42 : 0.32) : 0; // Laufziel: nur der lange Lauf, kein langes Rad
     const hasLong = n >= 2 && longShare > 0 && !['race', 'post'].includes(phase.key);
-    const longMin = hasLong ? minutes * longShare : 0;
+    let longMin = hasLong ? minutes * longShare : 0;
+    if (hasLong && isRun && sport === 'run') longMin = Math.min(longMin, dist.longCap);
     const restEach = (minutes - longMin) / (hasLong ? n - 1 : n);
 
     if (hasLong) list.push({ sport, kind: 'long', intensity: 'easy', minutes: toBucket(sport, Math.max(MIN_DURATION[sport], longMin)) });
@@ -251,7 +274,7 @@ function composeSessions(goal, phase, enduranceMinutes, weekIndex) {
   }
 
   // Fordernde Einheiten (80/20): auf nicht-lange Rad-/Lauf-Einheiten verteilen
-  const order = weekIndex % 2 === 0 ? ['run', 'bike'] : ['bike', 'run'];
+  const order = isRun ? ['run', 'run'] : weekIndex % 2 === 0 ? ['run', 'bike'] : ['bike', 'run'];
   let q = phase.quality;
   const qualityIntensity = {
     base: ['moderate'], build: ['hard', 'moderate'], peak: ['hard', 'hard'], taper: ['hard'], race: ['hard']
@@ -262,10 +285,19 @@ function composeSessions(goal, phase, enduranceMinutes, weekIndex) {
     if (!cand) continue;
     cand.kind = 'quality';
     cand.intensity = qualityIntensity[phase.quality - q] || 'moderate';
-    const maxQ = sport === 'run' ? 60 : 90;
+    const maxQ = sport === 'run' ? (isRun && goal.distance !== 'run10k' ? 75 : 60) : 90;
     if (['taper', 'race'].includes(phase.key)) cand.minutes = toBucket(sport, Math.min(cand.minutes, sport === 'run' ? 40 : 60));
     else cand.minutes = toBucket(sport, Math.min(Math.max(cand.minutes, sport === 'run' ? 40 : 60), maxQ));
     q--;
+  }
+  // Laufziel: der lange Lauf bleibt die längste Laufeinheit der Woche
+  if (isRun) {
+    const long = list.find((s) => s.sport === 'run' && s.kind === 'long');
+    const others = list.filter((s) => s.sport === 'run' && s.kind !== 'long');
+    if (long && others.length) {
+      const maxOther = Math.max(...others.map((s) => s.minutes));
+      if (long.minutes <= maxOther) long.minutes = toBucket('run', Math.min(dist.longCap, maxOther + 15));
+    }
   }
   // Schwimmen: in Aufbau/Vorbereitung eine zügige Einheit
   if (['build', 'peak'].includes(phase.key)) {
@@ -401,12 +433,12 @@ function buildWeek(store, weekStartKey, firstDay, opts = {}) {
   }
   const placed = placeSessions(composed, raceGoal, firstDay);
   if (raceDay !== null && raceDay >= firstDay && raceDay <= 6) {
-    placed.push({ sport: 'race', kind: 'race', intensity: 'hard', minutes: { sprint: 80, olympic: 150, half: 330, full: 720 }[goal.distance] || 150, _day: raceDay });
+    placed.push({ sport: 'race', kind: 'race', intensity: 'hard', minutes: DISTANCES[goal.distance].raceMin || { sprint: 80, olympic: 150, half: 330, full: 720 }[goal.distance] || 150, _day: raceDay });
   }
 
   const sessions = placed.map((s, i) => {
     const day = new Date(weekStart.getTime() + s._day * DAY_MS).toISOString().slice(0, 10);
-    const type = s.sport === 'race' ? 'Triathlon' : GROUP_TYPE[s.sport];
+    const type = s.sport === 'race' ? (DISTANCES[goal.distance].type === 'run' ? 'Laufwettkampf' : 'Triathlon') : GROUP_TYPE[s.sport];
     if (s.sport === 'race') {
       return {
         id: `race_${day}`, day, weekday: WEEKDAYS[s._day], sport: type, kind: 'race', intensity: 'hard',

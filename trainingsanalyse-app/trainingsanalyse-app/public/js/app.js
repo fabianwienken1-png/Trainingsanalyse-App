@@ -497,9 +497,9 @@ function infoContent(key) {
       return {
         title: 'So entsteht dein Plan',
         paras: [
-          'Phasen: Ohne Wettkampf trainierst du in der Grundlage. Mit Wettkampf-Datum durchläuft der Plan Grundlage (mehr als 16 Wochen vorher) → Aufbau → Wettkampfvorbereitung (letzte 8 Wochen, mit Koppeltraining) → Tapering (2 Wochen) → Wettkampfwoche. Jede 4. Woche ist eine Entlastungswoche.',
+          'Phasen: Ohne Wettkampf trainierst du in der Grundlage. Mit Wettkampf-Datum durchläuft der Plan Grundlage (mehr als 16 Wochen vorher) → Aufbau → Wettkampfvorbereitung (letzte 8 Wochen, beim Triathlon mit Koppeltraining) → Tapering (10 km: 1 Woche, Triathlon & Halbmarathon: 2 Wochen, Marathon: 3 Wochen) → Wettkampfwoche. Jede 4. Woche ist eine Entlastungswoche.',
           'Umfang: steigt um max. 10 % pro Woche – aber nur, wenn du die Vorwoche zu mindestens 70 % geschafft hast, die Belastung (ACWR) nicht erhöht und deine Erholung nicht eingeschränkt ist. Obergrenze sind deine verfügbaren Stunden.',
-          'Verteilung: Triathlon-Mix nach Distanz, lange Einheiten am Wochenende, nur 1–2 fordernde Einheiten pro Woche (80/20-Prinzip), Kraft fest eingeplant. Jeden Montag wird die Vorwoche ausgewertet und automatisch neu geplant.'
+          'Verteilung: Triathlon-Mix nach Distanz bzw. bei Laufzielen 3–5 Läufe plus lockeres Rad/Schwimmen als Ausgleich, lange Einheiten am Wochenende, nur 1–2 fordernde Einheiten pro Woche (80/20-Prinzip), Kraft fest eingeplant. Jeden Montag wird die Vorwoche ausgewertet und automatisch neu geplant.'
         ],
         current: d.reason || null
       };

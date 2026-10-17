@@ -173,10 +173,17 @@
       <div class="form-row">
         <label for="goal-distance">Distanz</label>
         <select id="goal-distance">
-          <option value="sprint">Sprintdistanz (0,75 / 20 / 5 km)</option>
+          <optgroup label="Triathlon">
+                <option value="sprint">Sprintdistanz (0,75 / 20 / 5 km)</option>
           <option value="olympic">Olympische Distanz (1,5 / 40 / 10 km)</option>
           <option value="half">Mitteldistanz (1,9 / 90 / 21 km)</option>
           <option value="full">Langdistanz (3,8 / 180 / 42 km)</option>
+              </optgroup>
+              <optgroup label="Laufen">
+                <option value="run10k">10-km-Lauf</option>
+                <option value="runHalf">Halbmarathon (21,1 km)</option>
+                <option value="marathon">Marathon (42,2 km)</option>
+              </optgroup>
           <option value="none">Kein Wettkampf – Form aufbauen</option>
         </select>
       </div>
