@@ -78,8 +78,16 @@
       <button class="pill-btn" id="regenerate-plan-btn" type="button">Neu planen</button>
     </header>
     <div class="view-body">
-      <div id="plan-summary"></div>
-      <div id="plan-sessions" class="session-list"></div>
+      <div class="segmented" role="tablist" aria-label="Woche">
+        <button type="button" role="tab" id="plan-tab-now" aria-selected="true">Diese Woche</button>
+        <button type="button" role="tab" id="plan-tab-next" aria-selected="false">Nächste Woche</button>
+      </div>
+      <div id="plan-current">
+        <div id="plan-summary"></div>
+        <div id="plan-sessions" class="session-list"></div>
+      </div>
+      <div id="plan-next" hidden></div>
+      <div id="plan-season"></div>
     </div>
   </section>
 

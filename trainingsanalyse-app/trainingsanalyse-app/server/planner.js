@@ -800,6 +800,42 @@ function decorateSessions(store) {
   });
 }
 
+// Vorschau der nächsten Woche (wird nicht gespeichert; Montag wird mit den
+// tatsächlichen Daten final geplant). Annahme: diese Woche läuft wie geplant.
+function previewNextWeek(store, now = new Date()) {
+  if (!store.plan || !store.plan.currentWeekStart) return null;
+  const clone = JSON.parse(JSON.stringify(store));
+  const next = addDaysKey(clone.plan.currentWeekStart, 7);
+  const week = buildWeek(clone, next, 0, { now, completionRate: null, newWeek: true });
+  clone.plan = Object.assign({}, clone.plan, { currentWeekStart: next, sessions: week.sessions, lastDecision: week.decision, weekIndex: week.weekIndex });
+  return { weekStart: next, decision: week.decision, sessions: decorateSessions(clone) };
+}
+
+// Saisonverlauf: Phase jeder Woche bis zum A-Wettkampf (bzw. 12 Wochen ohne Ziel)
+function seasonOutline(store, now = new Date()) {
+  const plan = store.plan || {};
+  const start = plan.currentWeekStart || analysis.startOfWeek(now).toISOString().slice(0, 10);
+  const athlete = store.athlete;
+  const goal = getGoal(athlete, start);
+  let count = 12;
+  if (goal.date) count = Math.min(52, Math.max(1, Math.round((new Date(mondayKeyOf(goal.date) + 'T00:00:00Z') - new Date(start + 'T00:00:00Z')) / (7 * DAY_MS)) + 2));
+  const races = getRaces(athlete);
+  const weeks = [];
+  for (let i = 0; i < count; i++) {
+    const key = addDaysKey(start, i * 7);
+    const g = getGoal(athlete, key);
+    const ph = i === 0 && plan.lastDecision ? { key: plan.lastDecision.phase, label: plan.lastDecision.phaseLabel } : phaseFor(g, key, (plan.weekIndex || 0) + i, athlete.deloadEveryNWeeks);
+    const end = addDaysKey(key, 6);
+    weeks.push({
+      week: key,
+      phase: ph.key,
+      label: ph.label,
+      races: races.filter((r) => r.date >= key && r.date <= end).map((r) => ({ name: r.name || DISTANCES[r.distance].label, priority: r.priority, date: r.date }))
+    });
+  }
+  return { goalName: goal.name || (goal.distance !== 'none' ? DISTANCES[goal.distance].label : null), weeks };
+}
+
 // Für Abwärtskompatibilität (alter Button "Neue Woche planen")
 function generateNextWeekPlan(store) {
   return replanCurrentWeek(store);
@@ -880,5 +916,5 @@ function adjustSession(store, sessionId, action, reason) {
 
 module.exports = {
   generateNextWeekPlan, ensureCurrentPlan, replanCurrentWeek, evaluatePreviousWeek, autoMarkDone,
-  decorateSessions, suggestAdjustment, adjustSession, getGoal, getRaces, mainRace, isAbsent, raceMinutes, addDaysKey, phaseFor, DISTANCES, PHASES
+  decorateSessions, previewNextWeek, seasonOutline, suggestAdjustment, adjustSession, getGoal, getRaces, mainRace, isAbsent, raceMinutes, addDaysKey, phaseFor, DISTANCES, PHASES
 };

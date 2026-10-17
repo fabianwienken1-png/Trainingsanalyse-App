@@ -967,6 +967,8 @@ const FLAG_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" s
 const PHASE_CHIP = { base: 'solid-muted', build: 'solid-warning', peak: 'solid-danger', recovery: 'outline-good', taper: 'outline-good', race: 'solid-warning', post: 'outline-good' };
 
 function renderPlan() {
+  renderSeason();
+  if (planTab === 'next') { if (nextWeekData) renderNextWeek(); return; }
   const info = planWeekInfo();
   const label = document.getElementById('plan-week-label');
   const sessionsBox = document.getElementById('plan-sessions');
@@ -1091,9 +1093,9 @@ function renderPlan() {
 }
 
 let openSessionId = null;
-function openSessionDetail(id) {
-  openSessionId = id;
-  const s = (currentState.plan.sessions || []).find((x) => x.id === id);
+function openSessionDetail(id, list) {
+  openSessionId = list ? null : id;
+  const s = (list || currentState.plan.sessions || []).find((x) => x.id === id);
   if (!s || !s.workout) return;
   const g = groupOf(s.sport);
   const why = [];
@@ -1111,9 +1113,146 @@ function openSessionDetail(id) {
     code: s.workout.code, device: s.workout.device, created: s.workout.created, why
   };
   document.getElementById('session-detail-title').textContent = s.workout.title;
-  mount('session-detail-body', workoutCard(w, 'Wozu diese Einheit?'), s.status === 'planned' ? moveBox(s) : null);
+  mount('session-detail-body', workoutCard(w, 'Wozu diese Einheit?'), !list && s.status === 'planned' ? moveBox(s) : null);
   const dlg = document.getElementById('session-detail-dialog');
   if (!dlg.open) dlg.showModal();
+}
+
+// ---------------------------------------------------------------------------
+// Plan: Umschalter diese/nächste Woche und Saisonverlauf
+// ---------------------------------------------------------------------------
+
+let planTab = 'now';
+let nextWeekData = null;
+
+function setupPlanTabs() {
+  const set = async (tab) => {
+    planTab = tab;
+    document.getElementById('plan-tab-now').setAttribute('aria-selected', String(tab === 'now'));
+    document.getElementById('plan-tab-next').setAttribute('aria-selected', String(tab === 'next'));
+    document.getElementById('plan-current').hidden = tab !== 'now';
+    document.getElementById('plan-next').hidden = tab !== 'next';
+    if (tab === 'next') await loadNextWeek();
+    else renderPlan();
+  };
+  document.getElementById('plan-tab-now').addEventListener('click', () => set('now'));
+  document.getElementById('plan-tab-next').addEventListener('click', () => set('next'));
+}
+
+async function loadNextWeek() {
+  mount('plan-next', el('div', { class: 'card muted small' }, 'Nächste Woche wird berechnet …'));
+  try {
+    const res = await fetch('/api/plan/next');
+    if (!res.ok) throw new Error('Server-Fehler');
+    nextWeekData = await res.json();
+    renderNextWeek();
+  } catch (e) {
+    mount('plan-next', el('div', { class: 'card muted small' }, 'Vorschau konnte nicht geladen werden: ' + e.message));
+  }
+}
+
+function renderNextWeek() {
+  const n = nextWeekData;
+  if (!n || !n.weekStart) { mount('plan-next', el('div', { class: 'card muted small' }, 'Keine Vorschau verfügbar.')); return; }
+  const d = n.decision || {};
+  const start = new Date(n.weekStart + 'T12:00:00');
+  document.getElementById('plan-week-label').textContent = `KW ${isoWeek(start)} · ${fmtRange(start, addDays(start, 6))}`;
+  const sessions = n.sessions.filter((s) => s.kind !== 'race' && s.kind !== 'mobility');
+  const minutes = sessions.reduce((a, s) => a + s.targetDurationMin, 0);
+  const hard = sessions.filter((s) => ['quality', 'brick'].includes(s.kind) || s.intensity === 'hard').length;
+  const long = sessions.filter((s) => s.kind === 'long').reduce((m, s) => Math.max(m, s.targetDurationMin), 0);
+  const nodes = [el('div', { class: 'card' }, [
+    el('div', { class: 'card-head', style: 'margin:0 0 10px' }, [
+      el('h2', {}, 'Nächste Woche'),
+      el('span', { class: `chip ${PHASE_CHIP[d.phase] || 'solid-muted'}` }, d.phaseLabel || 'Grundlage')
+    ]),
+    el('div', { class: 'review-stats' }, [
+      el('div', {}, [el('div', { class: 'label' }, 'Umfang'), el('div', { class: 'value' }, `${fmtHours(minutes / 60)} h`)]),
+      el('div', {}, [el('div', { class: 'label' }, 'Fordernd'), el('div', { class: 'value' }, String(hard))]),
+      el('div', {}, [el('div', { class: 'label' }, 'Längste'), el('div', { class: 'value' }, long ? `${long}′` : '–')])
+    ]),
+    d.phaseText ? el('div', { class: 'plan-reason' }, d.phaseText) : null,
+    el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Vorschau unter der Annahme, dass diese Woche wie geplant läuft. Am Montag wird mit deinen echten Daten (erledigt, Erholung, Gefühl) final geplant.')
+  ])];
+  const list = el('div', { class: 'session-list' });
+  for (const s of n.sessions) {
+    const dd = Number(s.day.split('-')[2]);
+    const g = groupOf(s.sport);
+    const w = s.workout;
+    if (s.kind === 'race') {
+      list.appendChild(el('div', { class: 'session-row' }, [
+        el('div', { class: 'session-day' }, [el('span', { class: 'wd' }, s.weekday), el('span', { class: 'dn' }, String(dd))]),
+        el('div', { class: 'session-card race' }, el('div', { class: 'session-main' }, [
+          el('div', { class: 'sport-icon sm', style: 'background:#3a2e12;color:#f5b544', html: FLAG_ICON }),
+          el('div', { class: 'session-text' }, [el('div', { class: 'title' }, `${s.priority || ''}-Wettkampf`), el('div', { class: 'desc' }, s.description)])
+        ]))
+      ]));
+      continue;
+    }
+    const kindTag = { long: 'lang', quality: INTENSITY_LABELS[s.intensity], brick: 'Koppel', mobility: 'optional' }[s.kind];
+    list.appendChild(el('div', { class: 'session-row' }, [
+      el('div', { class: 'session-day' }, [el('span', { class: 'wd' }, s.weekday), el('span', { class: 'dn' }, String(dd))]),
+      el('div', { class: 'session-card planned' }, [
+        el('button', { class: 'session-main session-open', type: 'button', onclick: () => openSessionDetail(s.id, n.sessions) }, [
+          el('span', { class: 'sport-bar', style: `background:${g.color}` }),
+          el('div', { class: 'session-text' }, [
+            el('div', { class: 'title' }, [w ? w.title : sportLabel(s.sport), kindTag ? el('span', { class: `kind-tag ${s.intensity}` }, kindTag) : null]),
+            el('div', { class: 'desc' }, [
+              `${s.targetDurationMin} min`,
+              w ? el('span', { class: 'code-inline' }, ` · ${w.code}`) : '',
+              w && w.mainHr ? el('span', { class: 'plan-hr' }, [el('span', { class: 'heart', 'aria-hidden': 'true' }, ' ♥'), ` ${w.mainHr}`]) : null,
+              w && (w.mainPace || w.mainWatts) ? el('span', { class: 'plan-hr' }, ` · ${w.mainPace || w.mainWatts}`) : null
+            ])
+          ]),
+          chevron()
+        ])
+      ])
+    ]));
+  }
+  if (!n.sessions.length) list.appendChild(el('div', { class: 'card muted small' }, 'Keine Einheiten geplant (Ruhetage, Krank/Urlaub).'));
+  nodes.push(list);
+  mount('plan-next', ...nodes);
+}
+
+const PHASE_COLOR = { base: '#5cc8f2', build: '#f5b544', peak: '#f2685c', recovery: '#4ed17a', taper: '#9b8cf2', race: '#d4f25c', post: '#6b6f78' };
+
+function renderSeason() {
+  const se = currentState.season;
+  if (!se || !se.weeks || se.weeks.length < 2) { mount('plan-season'); return; }
+  const weeks = se.weeks;
+  const bar = el('div', { class: 'season-bar' }, weeks.map((w, i) => el('div', {
+    class: `season-week${i === 0 ? ' now' : ''}`,
+    style: `background:${PHASE_COLOR[w.phase] || '#6b6f78'}`,
+    title: `KW ${isoWeek(new Date(w.week + 'T12:00:00'))}: ${w.label}`
+  }, w.races.length ? el('span', { class: `season-flag p${w.races[0].priority}` }, w.races[0].priority) : null)));
+  // Phasenblöcke zusammenfassen
+  const blocks = [];
+  for (const w of weeks) {
+    const last = blocks[blocks.length - 1];
+    // Entlastungswochen gehören zur umgebenden Phase
+    if (last && (last.phase === w.phase || w.phase === 'recovery')) { last.end = w.week; last.n++; if (w.phase === 'recovery') last.deload++; }
+    else blocks.push({ phase: w.phase, label: w.label, start: w.week, end: w.week, n: 1, deload: w.phase === 'recovery' ? 1 : 0 });
+  }
+  const main = blocks;
+  const fmt = (k) => new Date(k + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' });
+  const races = weeks.flatMap((w) => w.races);
+  mount('plan-season', el('div', { class: 'card' }, [
+    el('div', { class: 'card-head', style: 'margin:0 0 10px' }, [
+      el('h2', {}, se.goalName ? `Saison bis ${se.goalName}` : 'Die nächsten Wochen'),
+      el('span', { class: 'muted small' }, `${weeks.length} Wochen`)
+    ]),
+    bar,
+    el('div', { class: 'season-legend' }, [...new Set(weeks.map((w) => w.phase))].map((p) => el('span', {}, [
+      el('span', { class: 'dot', style: `background:${PHASE_COLOR[p]}` }), weeks.find((w) => w.phase === p).label
+    ]))),
+    el('div', { class: 'season-blocks' }, main.map((b) => el('div', {}, [
+      el('span', { class: 'dot', style: `background:${PHASE_COLOR[b.phase]}` }),
+      el('span', { class: 't' }, b.label),
+      el('span', { class: 'muted' }, `${fmt(b.start)} – ${fmt(addDaysKey(b.end, 6))} · ${b.n} Wo.${b.deload ? ` (${b.deload}× Entl.)` : ''}`)
+    ]))),
+    races.length ? el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Wettkämpfe: ' + races.map((r) => `${r.name} (${r.priority}, ${fmt(r.date)})`).join(' · ')) : null,
+    el('div', { class: 'muted small', style: 'margin-top:6px' }, 'Grüne Wochen sind Entlastungswochen. Die genaue Planung jeder Woche passt sich deinen Daten an.')
+  ]));
 }
 
 // Einheit auf einen anderen Tag dieser Woche verschieben
@@ -1487,6 +1626,7 @@ function setupActivityUi() {
   setupPerfForm();
   setupRaceForm();
   setupAbsenceForm();
+  setupPlanTabs();
   const sdDialog = document.getElementById('session-detail-dialog');
   document.getElementById('close-session-detail-btn').addEventListener('click', () => sdDialog.close());
   loadSpontanPrefs();

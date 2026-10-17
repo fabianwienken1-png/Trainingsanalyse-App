@@ -617,3 +617,20 @@ form[hidden], .form-card[hidden] { display: none !important; }
 .absence-grid > div { min-width: 0; }
 .absence-grid input { min-width: 0; max-width: 100%; box-sizing: border-box; }
 input[type="time"] { width: auto; flex: 1; min-width: 0; }
+
+/* Plan: Umschalter und Saisonverlauf */
+.segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.segmented button { min-height: 38px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-weight: 600; }
+.segmented button[aria-selected="true"] { background: var(--surface-2); color: var(--text); }
+.season-bar { display: flex; gap: 2px; height: 28px; align-items: stretch; }
+.season-week { flex: 1; border-radius: 3px; position: relative; opacity: 0.85; min-width: 3px; }
+.season-week.now { opacity: 1; outline: 2px solid var(--text); outline-offset: 1px; }
+.season-flag { position: absolute; left: 50%; top: -18px; transform: translateX(-50%); font-size: 11px; font-weight: 700; color: #f5b544; }
+.season-flag.pB { color: var(--good); }
+.season-flag.pC { color: var(--muted); }
+.season-bar { margin-top: 18px; }
+.season-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.season-legend .dot, .season-blocks .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.season-blocks { display: grid; gap: 6px; margin-top: 12px; font-size: 14px; }
+.season-blocks > div { display: flex; align-items: center; gap: 4px; }
+.season-blocks .t { font-weight: 600; margin-right: auto; }

@@ -240,6 +240,7 @@ route('GET', '/api/state', async (req, res) => {
     races: planner.getRaces(s.athlete).map((r) => Object.assign({}, r, { info: performance.raceInfo(s, r) })),
     absences: s.athlete.absences || [],
     weekReview: weekReview(s),
+    season: planner.seasonOutline(s),
     shoes: shoeStats(s),
     backup: backup.status(s),
     pushSettings: Object.assign(push.settings(s), { publicKey: s.push && s.push.vapid ? s.push.vapid.publicKey : null }),
@@ -678,6 +679,12 @@ route('POST', '/api/absences', async (req, res) => {
   planner.replanCurrentWeek(s);
   await saveStore(s);
   sendJson(res, 200, { ok: true, absences: s.athlete.absences });
+});
+
+// Vorschau nächste Woche
+route('GET', '/api/plan/next', async (req, res) => {
+  const s = await loadStore();
+  sendJson(res, 200, planner.previewNextWeek(s) || {});
 });
 
 // Einheit auf einen anderen Tag dieser Woche verschieben
