@@ -81,7 +81,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
           { label: '5 min', text: `einlaufen, sehr locker` },
           { label: `${main} min`, text: `gleichmäßig in ${zone(a, 2)} – Unterhaltung muss möglich sein` },
           D >= 40 ? { label: '4 × 20 s', text: 'Steigerungsläufe, locker schnell, dazwischen 1 min gehen/traben' } : null,
-          { label: '5 min', text: 'auslaufen' }
+          { label: '5 min', text: `locker auslaufen in ${zone(a, 1)} oder darunter` }
         ]
       };
     }
@@ -94,7 +94,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
           { label: '15 min', text: `einlaufen in ${zone(a, 2)}` },
           { label: `2 × ${block} min`, text: `zügig in ${zone(a, 3)}, dazwischen 3 min traben in ${zone(a, 1)}` },
           extra >= 5 ? { label: `${extra} min`, text: `ruhig weiter in ${zone(a, 2)}` } : null,
-          { label: `${extra >= 5 ? 7 : Math.max(5, extra + 7)} min`, text: 'auslaufen' }
+          { label: `${extra >= 5 ? 7 : Math.max(5, extra + 7)} min`, text: `locker auslaufen in ${zone(a, 1)} oder darunter` }
         ]
       };
     }
@@ -106,7 +106,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
         { label: '15 min', text: `einlaufen in ${zone(a, 2)}, dann 3 kurze Steigerungen` },
         { label: `${reps} × 3 min`, text: `schnell in ${zone(a, 4)}, dazwischen 2 min traben in ${zone(a, 1)}` },
         extra >= 5 ? { label: `${extra} min`, text: `ruhig in ${zone(a, 2)}` } : null,
-        { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'auslaufen' }
+        { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: `locker auslaufen in ${zone(a, 1)} oder darunter` }
       ]
     };
   }
@@ -118,7 +118,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
         steps: [
           { label: '10 min', text: 'locker einrollen' },
           { label: `${Math.max(10, D - 15)} min`, text: `gleichmäßig in ${zone(a, 2)}, Trittfrequenz 85–95` },
-          { label: '5 min', text: 'ausrollen' }
+          { label: '5 min', text: `locker ausrollen in ${zone(a, 1)} oder darunter` }
         ]
       };
     }
@@ -131,7 +131,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
           { label: '15 min', text: `einrollen in ${zone(a, 2)}` },
           { label: `${reps} × 8 min`, text: `kräftig in ${zone(a, 3)} (oberer Bereich), dazwischen 4 min locker in ${zone(a, 1)}` },
           extra >= 5 ? { label: `${extra} min`, text: `gleichmäßig in ${zone(a, 2)}` } : null,
-          { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'ausrollen' }
+          { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: `locker ausrollen in ${zone(a, 1)} oder darunter` }
         ]
       };
     }
@@ -143,7 +143,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
         { label: '15 min', text: `einrollen in ${zone(a, 2)}, 2 × 30 s antreten` },
         { label: `${reps} × 3 min`, text: `hart in ${zone(a, 5)}, dazwischen 3 min sehr locker in ${zone(a, 1)}` },
         extra >= 5 ? { label: `${extra} min`, text: `gleichmäßig in ${zone(a, 2)}` } : null,
-        { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'ausrollen' }
+        { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: `locker ausrollen in ${zone(a, 1)} oder darunter` }
       ]
     };
   }
