@@ -195,9 +195,11 @@ route('GET', '/api/state', async (req, res) => {
   const s = await loadStore();
   const hrChanges = athleteHr.updateAutoHR(s);
   if (Object.keys(hrChanges).length) console.log('[puls] automatisch aktualisiert:', JSON.stringify(hrChanges));
+  const reclassified = healthImport.reclassifyActivities(s);
+  if (reclassified) console.log(`[sportart] ${reclassified} Einträge neu eingeordnet.`);
   const planChanged = planner.ensureCurrentPlan(s);
   const marked = planner.autoMarkDone(s);
-  if (Object.keys(hrChanges).length || planChanged || marked) await saveStore(s);
+  if (Object.keys(hrChanges).length || planChanged || marked || reclassified) await saveStore(s);
   const report = analysis.buildAnalysisReport(s.activities, s.athlete);
   const rec = recovery.computeRecovery(s.health);
   if (rec && rec.status === 'eingeschränkt') {
@@ -417,6 +419,38 @@ route('POST', '/api/plan/adjust-session', async (req, res) => {
 // health-import.js/health-auto-export.js - sonst für immer in der App
 // stehen blieben würden). Kein Pfad-Parameter-Routing im einfachen Router hier,
 // daher als Query-Parameter statt "/api/activities/:id".
+// Sportart einer Aktivität korrigieren. learn=true: alle Einträge mit demselben
+// Namen aus Apple Health (jetzt und künftig) genauso einordnen.
+route('POST', '/api/activities/type', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const type = body && body.type;
+  if (!healthImport.VALID_MANUAL_SPORTS.includes(type)) return sendError(res, 400, 'Unbekannte Sportart.');
+  const s = await loadStore();
+  const act = s.activities.find((a) => a.id === body.id);
+  if (!act) return sendError(res, 404, 'Aktivität nicht gefunden.');
+  act.type = type;
+  act.typeOverride = true;
+  let affected = 1;
+  const key = (act.rawType || '').trim().toLowerCase();
+  if (body.learn && key && act.source !== 'manual') {
+    s.athlete.typeRules = Object.assign({}, s.athlete.typeRules, { [key]: type });
+    for (const a of s.activities) {
+      if (a !== act && !a.typeOverride && (a.rawType || '').trim().toLowerCase() === key) {
+        a.type = type;
+        affected++;
+      }
+    }
+  }
+  planner.autoMarkDone(s);
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, affected });
+});
+
 route('DELETE', '/api/activities', async (req, res, urlObj) => {
   const id = urlObj.searchParams.get('id');
   if (!id) {

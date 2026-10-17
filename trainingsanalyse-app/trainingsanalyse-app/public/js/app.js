@@ -17,6 +17,7 @@ const SPORT_LABELS = {
   Walk: 'Gehen',
   Hike: 'Wandern',
   Yoga: 'Yoga',
+  Mobility: 'Dehnen & Mobilität',
   Workout: 'Workout'
 };
 
@@ -25,6 +26,7 @@ const ICONS = {
   bike: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="17" r="3.5"/><circle cx="18" cy="17" r="3.5"/><path d="M6 17l4-8h5l3 8M10 9L9 6H7"/></svg>',
   run: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="14" cy="4" r="2"/><path d="M6 21l4-6 3 2 1-5 4 3M9 9l3-2 3 3"/></svg>',
   strength: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 7v10M18 7v10M3 10v4M21 10v4M6 12h12"/></svg>',
+  mobility: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="4" r="2"/><path d="M12 6v7M5 9l7 2 7-2M8 21l4-8 4 8"/></svg>',
   other: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>'
 };
 
@@ -34,6 +36,7 @@ const SPORT_GROUPS = [
   { key: 'bike', label: 'Rad', short: 'Rad', color: '#f28c5c', tint: '#3a2418', types: ['Ride', 'VirtualRide'] },
   { key: 'run', label: 'Lauf', short: 'Lauf', color: '#d4f25c', tint: '#2b3a12', types: ['Run', 'TrailRun'] },
   { key: 'strength', label: 'Kraft', short: 'Kraft', color: '#b79cf2', tint: '#2a2338', types: ['WeightTraining'] },
+  { key: 'mobility', label: 'Dehnen', short: 'Dehnen', color: '#7fd6b4', tint: '#173029', types: ['Mobility', 'Yoga'] },
   { key: 'other', label: 'Sonstiges', short: 'Sonst.', color: '#9a9da3', tint: '#26282c', types: [] }
 ];
 
@@ -1223,9 +1226,50 @@ function openActivityDetail(act) {
   mount('activity-detail-body',
     el('div', { class: 'muted small', style: 'margin-bottom:14px' },
       new Date(act.startDate).toLocaleString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ` · ${sourceLabel}`),
-    el('div', { class: 'detail-grid' }, items.map(([l, v]) => el('div', {}, [el('div', { class: 'label' }, l), el('div', { class: 'value' }, v)])))
+    el('div', { class: 'detail-grid' }, items.map(([l, v]) => el('div', {}, [el('div', { class: 'label' }, l), el('div', { class: 'value' }, v)]))),
+    typeEditor(act)
   );
   document.getElementById('activity-detail-dialog').showModal();
+}
+
+// Sportart korrigieren (z.B. "Workout" → "Dehnen & Mobilität")
+const EDITABLE_TYPES = ['Swim', 'Ride', 'VirtualRide', 'Run', 'TrailRun', 'WeightTraining', 'Mobility', 'Yoga', 'Walk', 'Hike', 'Workout'];
+function typeEditor(act) {
+  const select = el('select', { id: 'activity-type-select' },
+    EDITABLE_TYPES.map((t) => el('option', { value: t }, SPORT_LABELS[t] || t)));
+  select.value = EDITABLE_TYPES.includes(act.type) ? act.type : 'Workout';
+  const canLearn = act.source !== 'manual' && act.rawType;
+  const learn = el('input', { type: 'checkbox', id: 'activity-type-learn' });
+  learn.checked = true;
+  const status = el('div', { class: 'muted small', style: 'margin-top:6px' });
+  const save = el('button', { type: 'button', class: 'secondary-btn', style: 'margin-top:10px;width:100%' }, 'Sportart speichern');
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const res = await fetch('/api/activities/type', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: act.id, type: select.value, learn: !!(canLearn && learn.checked) })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Unbekannter Fehler');
+      status.textContent = body.affected > 1 ? `Gespeichert – ${body.affected} Einträge angepasst.` : 'Gespeichert.';
+      await refresh();
+      setTimeout(() => document.getElementById('activity-detail-dialog').close(), 700);
+    } catch (err) {
+      status.textContent = 'Speichern fehlgeschlagen: ' + err.message;
+    } finally {
+      save.disabled = false;
+    }
+  });
+  return el('div', { style: 'margin-top:18px;padding-top:14px;border-top:1px solid var(--border)' }, [
+    el('div', { class: 'label muted small', style: 'margin-bottom:6px' }, 'Sportart'),
+    select,
+    canLearn ? el('label', { class: 'muted small', style: 'display:flex;gap:8px;align-items:center;margin-top:10px' }, [
+      learn, el('span', {}, `Alle Einträge „${act.rawType}“ künftig so erkennen`)
+    ]) : null,
+    save,
+    status
+  ].filter(Boolean));
 }
 
 async function onDeleteActivity() {

@@ -15,6 +15,36 @@
 // die analysis.js und planner.js verwenden (Run, Ride, Swim, WeightTraining, ...).
 // Bewusst über Teilstring-Erkennung statt exakter Liste, damit Locale-Varianten
 // ("Laufen im Freien", "Outdoor Run", "Running", ...) automatisch abgedeckt sind.
+const MOBILITY_WORDS = [
+  'flexib', 'dehn', 'stretch', 'mobil', 'beweglich', 'cooldown', 'cool down', 'abkühl', 'abkuhl',
+  'pilates', 'tai chi', 'taichi', 'mind and body', 'mind & body', 'geist und körper', 'achtsam',
+  'vorbereitung und erholung', 'preparation and recovery', 'regeneration', 'faszien', 'foam'
+];
+
+// Vom Nutzer gelernte Zuordnungen (Einstellung "künftig immer so erkennen"):
+// athlete.typeRules = { "<Rohname aus Apple Health>": "Mobility", ... }
+function applyTypeRules(store, activity) {
+  if (!activity || activity.typeOverride) return activity;
+  const rules = (store.athlete && store.athlete.typeRules) || {};
+  const key = (activity.rawType || '').trim().toLowerCase();
+  if (key && rules[key]) activity.type = rules[key];
+  return activity;
+}
+
+// Bestehende Einträge mit der aktuellen Erkennung neu einordnen (z.B. nachdem
+// neue Begriffe dazugekommen sind). Manuell geänderte bleiben unangetastet.
+function reclassifyActivities(store) {
+  let changed = 0;
+  for (const a of store.activities || []) {
+    if (a.source !== 'apple_health' || a.typeOverride || !a.rawType) continue;
+    const before = a.type;
+    a.type = mapWorkoutType(a.rawType);
+    applyTypeRules(store, a);
+    if (a.type !== before) changed++;
+  }
+  return changed;
+}
+
 function mapWorkoutType(rawType) {
   const t = (rawType || '').toLowerCase();
 
@@ -32,6 +62,8 @@ function mapWorkoutType(rawType) {
   if (t.includes('wander') || t.includes('hik')) return 'Hike';
   if (t.includes('geh') || t.includes('walk') || t.includes('spazier')) return 'Walk';
   if (t.includes('yoga')) return 'Yoga';
+  // Dehnen/Mobilität/Regeneration – vor "Kraft", damit z.B. "Abkühlen" nicht als Workout zählt
+  if (MOBILITY_WORDS.some((w) => t.includes(w))) return 'Mobility';
   if (t.includes('kraft') || t.includes('strength')) return 'WeightTraining';
 
   return 'Workout'; // generischer Fallback (z.B. HIIT, Rudern, Crosstrainer, ...)
@@ -96,7 +128,14 @@ function normalizeHealthPayload(body) {
 // (Dedupe nach id - siehe buildStableId) und sortiert danach wieder nach Datum.
 function mergeHealthActivity(store, normalized) {
   const idx = store.activities.findIndex((a) => a.id === normalized.id);
+  applyTypeRules(store, normalized);
   if (idx >= 0) {
+    const prev = store.activities[idx];
+    // Vom Nutzer geänderte Sportart bei erneutem Import behalten
+    if (prev.typeOverride && normalized.source !== 'manual') {
+      normalized.type = prev.type;
+      normalized.typeOverride = true;
+    }
     store.activities[idx] = normalized;
   } else {
     store.activities.push(normalized);
@@ -112,7 +151,7 @@ function mergeHealthActivity(store, normalized) {
 // sind pro Sportart hinterlegt).
 const VALID_MANUAL_SPORTS = [
   'Run', 'TrailRun', 'Ride', 'VirtualRide', 'Swim',
-  'WeightTraining', 'Walk', 'Hike', 'Yoga', 'Workout'
+  'WeightTraining', 'Walk', 'Hike', 'Yoga', 'Mobility', 'Workout'
 ];
 
 function validateManualActivity(body) {
@@ -156,6 +195,8 @@ function normalizeManualActivity(body) {
 
 module.exports = {
   mapWorkoutType,
+  applyTypeRules,
+  reclassifyActivities,
   validatePayload,
   normalizeHealthPayload,
   mergeHealthActivity,

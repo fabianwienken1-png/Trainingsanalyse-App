@@ -21,6 +21,7 @@ const FALLBACK_INTENSITY_PER_MIN = {
   Walk: 3,
   Hike: 4,
   Yoga: 2,
+  Mobility: 1.5,
   default: 5
 };
 
