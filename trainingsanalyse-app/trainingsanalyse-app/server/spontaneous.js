@@ -92,7 +92,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
         title: 'Tempodauerlauf',
         steps: [
           { label: '15 min', text: `einlaufen in ${zone(a, 2)}` },
-          { label: `2 × ${block} min`, text: `zügig in ${zone(a, 3)}, dazwischen 3 min traben` },
+          { label: `2 × ${block} min`, text: `zügig in ${zone(a, 3)}, dazwischen 3 min traben in ${zone(a, 1)}` },
           extra >= 5 ? { label: `${extra} min`, text: `ruhig weiter in ${zone(a, 2)}` } : null,
           { label: `${extra >= 5 ? 7 : Math.max(5, extra + 7)} min`, text: 'auslaufen' }
         ]
@@ -104,7 +104,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       title: 'Intervalle',
       steps: [
         { label: '15 min', text: `einlaufen in ${zone(a, 2)}, dann 3 kurze Steigerungen` },
-        { label: `${reps} × 3 min`, text: `schnell in ${zone(a, 4)}, dazwischen 2 min traben` },
+        { label: `${reps} × 3 min`, text: `schnell in ${zone(a, 4)}, dazwischen 2 min traben in ${zone(a, 1)}` },
         extra >= 5 ? { label: `${extra} min`, text: `ruhig in ${zone(a, 2)}` } : null,
         { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'auslaufen' }
       ]
@@ -129,7 +129,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
         title: 'Sweet Spot',
         steps: [
           { label: '15 min', text: `einrollen in ${zone(a, 2)}` },
-          { label: `${reps} × 8 min`, text: `kräftig in ${zone(a, 3)} (oberer Bereich), dazwischen 4 min locker` },
+          { label: `${reps} × 8 min`, text: `kräftig in ${zone(a, 3)} (oberer Bereich), dazwischen 4 min locker in ${zone(a, 1)}` },
           extra >= 5 ? { label: `${extra} min`, text: `gleichmäßig in ${zone(a, 2)}` } : null,
           { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'ausrollen' }
         ]
@@ -141,7 +141,7 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       title: 'VO2max-Intervalle',
       steps: [
         { label: '15 min', text: `einrollen in ${zone(a, 2)}, 2 × 30 s antreten` },
-        { label: `${reps} × 3 min`, text: `hart in ${zone(a, 5)}, dazwischen 3 min sehr locker` },
+        { label: `${reps} × 3 min`, text: `hart in ${zone(a, 5)}, dazwischen 3 min sehr locker in ${zone(a, 1)}` },
         extra >= 5 ? { label: `${extra} min`, text: `gleichmäßig in ${zone(a, 2)}` } : null,
         { label: `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, text: 'ausrollen' }
       ]
