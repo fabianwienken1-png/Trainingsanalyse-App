@@ -97,14 +97,14 @@ function buildWorkout(sport, intensity, minutes, ctx) {
   const w = buildWorkoutBase(sport, intensity, minutes, Object.assign({}, ctx, { athlete }));
   if (intensity !== 'rest' && (sport === 'run' || sport === 'bike')) {
     w.steps = w.steps.map((st) => {
-      if (!st || !st.zone) return st;
+      if (!st || (!st.zone && !st.paceZone)) return st;
       const pos = typeof st.pos === 'number' ? st.pos : 0.5;
       if (sport === 'run' && t.tenKSec) {
         const pz = st.paceZone || [st.zone, pos];
         const p = performance.paceForZone(t.tenKSec, pz[0], pz[1]);
         return Object.assign({}, st, { pace: p.text, speed: p.kmh });
       }
-      if (sport === 'bike' && t.ftp) {
+      if (sport === 'bike' && t.ftp && st.zone) {
         return Object.assign({}, st, { watts: performance.wattsForZone(t.ftp, st.zone, pos).text });
       }
       return st;
@@ -150,7 +150,7 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
         steps: [
           step(a, '5 min', `einlaufen, sehr locker – ${zone(a, 1)}`, ...WARM),
           step(a, `${main} min`, `gleichmäßig in ${zone(a, 2)} – Unterhaltung muss möglich sein`, ...BASE),
-          D >= 40 ? step(a, '4 × 20 s', 'Steigerungsläufe, locker schnell – zu kurz für einen Zielpuls, nach Gefühl') : null,
+          D >= 40 ? Object.assign(step(a, '4 × 20 s', 'Steigerungsläufe: zügig beschleunigen, die letzten Sekunden schnell aber locker (etwa 5-km-Renntempo) – zu kurz für einen Zielpuls. Laufband: braucht ein paar Sekunden zum Beschleunigen, daher Satz ruhig 30 s einstellen'), { paceZone: [5, 1] }) : null,
           D >= 40 ? step(a, 'je 1 min', `dazwischen gehen/traben – ${zone(a, 1)}`, ...REST) : null,
           step(a, '5 min', `locker auslaufen – ${zone(a, 1)}`, ...COOL)
         ]
