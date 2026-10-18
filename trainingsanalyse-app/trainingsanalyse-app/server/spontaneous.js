@@ -217,27 +217,38 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
   }
 
   if (sport === 'bike') {
+    // Trittfrequenz (U/min) je Abschnitt: locker 85–95, Spin-ups 100–110 für
+    // einen runden Tritt, Kraftausdauer 60–70 (hoher Gang), VO2max 95–105.
+    const R = (st, rpm) => (st ? Object.assign(st, { rpm }) : st);
     if (intensity === 'easy') {
+      const spin = D >= 45;
+      const main = Math.max(10, D - 15 - (spin ? 10 : 0));
       return {
         title: 'Grundlagenausdauer Rad',
         steps: [
-          step(a, '10 min', `locker einrollen – ${zone(a, 1)}`, ...WARM),
-          step(a, `${Math.max(10, D - 15)} min`, `gleichmäßig – ${zone(a, 2)}, Trittfrequenz 85–95`, ...BASE),
-          step(a, '5 min', `locker ausrollen – ${zone(a, 1)}`, ...COOL)
+          R(step(a, '10 min', `locker einrollen – ${zone(a, 1)}`, ...WARM), '85–90'),
+          R(step(a, `${main} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE), '85–95'),
+          spin ? R(step(a, '5 × 1 min', `Spin-ups: leichter Gang, schnell und rund treten, Becken ruhig – ${zone(a, 2)}`, 2, 0.3), '100–110') : null,
+          spin ? R(step(a, 'je 1 min', `normal weiter – ${zone(a, 2)}`, ...BASE), '85–90') : null,
+          R(step(a, '5 min', `locker ausrollen – ${zone(a, 1)}`, ...COOL), '85–90')
         ]
       };
     }
     if (intensity === 'moderate') {
       const reps = D >= 75 ? 4 : D >= 55 ? 3 : 2;
       const extra = D - 15 - reps * 12 - 10;
+      const low = !!ctx.lowCadence;
       return {
-        title: 'Sweet Spot (unterschwellig)',
+        title: low ? 'Kraftausdauer (unterschwellig)' : 'Sweet Spot (unterschwellig)',
+        lowCadence: low,
         steps: [
-          step(a, '15 min', `einrollen – ${zone(a, 1)}`, ...WARM),
-          step(a, `${reps} × 8 min`, `kräftig, knapp unter der Schwelle – ${zone(a, 3)}, oberer Bereich`, 3, 0.75),
-          step(a, 'je 4 min', `Pause dazwischen: locker treten – ${zone(a, 1)}`, ...REST),
-          extra >= 5 ? step(a, `${extra} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE) : null,
-          step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker ausrollen – ${zone(a, 1)}`, ...COOL)
+          R(step(a, '15 min', `einrollen – ${zone(a, 1)}`, ...WARM), '85–90'),
+          R(step(a, `${reps} × 8 min`, low
+            ? `kräftig mit hohem Widerstand, knapp unter der Schwelle – ${zone(a, 3)}, oberer Bereich. Oberkörper ruhig; bei Knieproblemen lieber 75–80 U/min`
+            : `kräftig, knapp unter der Schwelle – ${zone(a, 3)}, oberer Bereich`, 3, 0.75), low ? '60–70' : '85–95'),
+          R(step(a, 'je 4 min', `Pause dazwischen: locker treten – ${zone(a, 1)}`, ...REST), '90–95'),
+          extra >= 5 ? R(step(a, `${extra} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE), '85–95') : null,
+          R(step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker ausrollen – ${zone(a, 1)}`, ...COOL), '85–90')
         ]
       };
     }
@@ -246,11 +257,11 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
     return {
       title: 'VO2max-Intervalle',
       steps: [
-        step(a, '15 min', `einrollen – ${zone(a, 1)}, am Ende 2 × 30 s antreten`, ...WARM),
-        step(a, `${reps} × 3 min`, `hart – ${zone(a, 5)}`, 5, 0.3),
-        step(a, 'je 3 min', `Pause dazwischen: sehr locker treten – ${zone(a, 1)}`, ...REST),
-        extra >= 5 ? step(a, `${extra} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE) : null,
-        step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker ausrollen – ${zone(a, 1)}`, ...COOL)
+        R(step(a, '15 min', `einrollen – ${zone(a, 1)}, am Ende 2 × 30 s antreten`, ...WARM), '85–90'),
+        R(step(a, `${reps} × 3 min`, `hart – ${zone(a, 5)}, eher hohe Trittfrequenz, das schont die Beine`, 5, 0.3), '95–105'),
+        R(step(a, 'je 3 min', `Pause dazwischen: sehr locker treten – ${zone(a, 1)}`, ...REST), '85–90'),
+        extra >= 5 ? R(step(a, `${extra} min`, `gleichmäßig – ${zone(a, 2)}`, ...BASE), '85–95') : null,
+        R(step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker ausrollen – ${zone(a, 1)}`, ...COOL), '85–90')
       ]
     };
   }
@@ -359,6 +370,7 @@ function workoutCode(sport, intensity, minutes, workout) {
   if (intensity === 'rest') return `ER-${Math.min(minutes, 30)}`;
   if (sport === 'mobility') return `M-${minutes}`;
   if (workout && workout.hill) return `L-BE-${minutes}`;
+  if (workout && workout.lowCadence) return `R-KA-${minutes}`;
   if (sport === 'strength') {
     const ab = workout.title.endsWith('A') ? 'A' : 'B';
     return intensity === 'easy' ? `K-${ab}-L` : `K-${ab}`;

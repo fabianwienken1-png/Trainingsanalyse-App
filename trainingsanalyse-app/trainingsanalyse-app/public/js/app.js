@@ -802,7 +802,7 @@ function workoutCard(w, whyTitle = 'Warum dieser Vorschlag?') {
       ]),
       el('span', { class: 'step-text' }, [
         st.text,
-        st.pace || st.watts ? el('span', { class: 'step-target' }, st.pace ? `${st.pace} · Laufband ${st.speed}` : st.watts) : null
+        st.pace || st.watts || st.rpm ? el('span', { class: 'step-target' }, st.pace ? `${st.pace} · Laufband ${st.speed}` : [st.watts, st.rpm ? `${st.rpm} U/min` : null].filter(Boolean).join(' · ')) : null
       ])
     ]))),
     w.steps.some((st) => st.hr) ? null : (w.sport === 'strength' ? null : el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Trag Maximal- und Ruhepuls in den Einstellungen ein, dann siehst du hier zu jedem Abschnitt den Zielpuls.')),

@@ -771,7 +771,9 @@ function decorateSessions(store) {
     // Harte Laufeinheiten: im Wochenwechsel flache Intervalle und Bergintervalle
     const weekNo = Math.floor(new Date(s.day + 'T00:00:00Z').getTime() / (7 * DAY_MS));
     const hill = g === 'run' && s.kind === 'quality' && s.intensity === 'hard' && weekNo % 2 === 1;
-    const ctx = Object.assign({}, ctxBase, { strengthCount: s.variant === 'B' ? 1 : 0, hill });
+    // Rad "mittel": im Wochenwechsel Sweet Spot normal und Kraftausdauer (niedrige Trittfrequenz)
+    const lowCadence = g === 'bike' && s.intensity === 'moderate' && weekNo % 2 === 0;
+    const ctx = Object.assign({}, ctxBase, { strengthCount: s.variant === 'B' ? 1 : 0, hill, lowCadence });
     const w = workouts.buildWorkout(g, s.intensity, s.targetDurationMin, ctx);
     let title = w.title;
     if (s.kind === 'long') title = g === 'bike' ? 'Lange Ausfahrt' : g === 'run' ? 'Langer Lauf' : title;
