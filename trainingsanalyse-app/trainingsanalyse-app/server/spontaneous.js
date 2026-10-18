@@ -102,7 +102,16 @@ function buildWorkout(sport, intensity, minutes, ctx) {
       if (sport === 'run' && t.tenKSec) {
         const pz = st.paceZone || [st.zone, pos];
         const p = performance.paceForZone(t.tenKSec, pz[0], pz[1]);
-        return Object.assign({}, st, { pace: p.text, speed: p.kmh });
+        // Laufband: 1 % Steigung gleicht den fehlenden Luftwiderstand aus. Bei mehr
+        // Steigung sinkt das Tempo für gleiche Anstrengung (~0,45 km/h pro %).
+        const grade = typeof st.grade === 'number' ? st.grade : 1;
+        if (grade > 1) {
+          const lo = Math.max(4, Number(p.kmh.split('–')[0].replace(',', '.')) - 0.45 * grade);
+          const hi = Math.max(4.5, Number(p.kmh.split('–')[1].replace(/[^0-9,]/g, '').replace(',', '.')) - 0.45 * grade);
+          const f = (x) => x.toFixed(1).replace('.', ',');
+          return Object.assign({}, st, { pace: `bergauf nach Gefühl/Puls (flach ≈ ${p.text})`, speed: `${f(lo)}–${f(hi)} km/h bei ${grade} % Steigung` });
+        }
+        return Object.assign({}, st, { pace: p.text, speed: `${p.kmh} · 1 % Steigung` });
       }
       if (sport === 'bike' && t.ftp && st.zone) {
         return Object.assign({}, st, { watts: performance.wattsForZone(t.ftp, st.zone, pos).text });
@@ -171,6 +180,24 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
           step(a, 'je 1 min', `Pause dazwischen: locker traben – ${zone(a, 1)}`, ...REST),
           extra >= 5 ? step(a, `${extra} min`, `ruhig – ${zone(a, 2)}`, ...BASE) : null,
           step(a, `${extra >= 5 ? 10 : Math.max(5, extra + 10)} min`, `locker auslaufen – ${zone(a, 1)}`, ...COOL)
+        ]
+      };
+    }
+    if (ctx.hill) {
+      // Bergintervalle (Laufband mit Steigung oder Hügel draußen): gleicher
+      // Herz-Kreislauf-Reiz wie flache Intervalle, aber weniger Stoßbelastung
+      // und mehr Kraft in Waden/Gesäß.
+      const hReps = D >= 55 ? 8 : D >= 45 ? 7 : 6;
+      const hExtra = D - 15 - hReps * 3 - 10;
+      return {
+        title: 'Bergintervalle',
+        hill: true,
+        steps: [
+          step(a, '15 min', `einlaufen – ${zone(a, 1)}, am Ende 3 kurze Steigerungen`, ...WARM),
+          Object.assign(step(a, `${hReps} × 90 s`, `bergauf kräftig – ${zone(a, 4)}, aufrecht laufen, kurze schnelle Schritte, Arme aktiv`, 4, 0.6), { paceZone: [5, 0.2], grade: 6 }),
+          Object.assign(step(a, 'je 90 s', `Pause: locker traben bzw. gehen, Steigung runter – ${zone(a, 1)}`, ...REST), { grade: 1 }),
+          hExtra >= 5 ? step(a, `${hExtra} min`, `ruhig – ${zone(a, 2)}`, ...BASE) : null,
+          step(a, `${hExtra >= 5 ? 10 : Math.max(5, hExtra + 10)} min`, `locker auslaufen – ${zone(a, 1)}`, ...COOL)
         ]
       };
     }
@@ -331,6 +358,7 @@ const CODE_TYPE = { easy: 'GA', moderate: 'TE', hard: 'IN' };
 function workoutCode(sport, intensity, minutes, workout) {
   if (intensity === 'rest') return `ER-${Math.min(minutes, 30)}`;
   if (sport === 'mobility') return `M-${minutes}`;
+  if (workout && workout.hill) return `L-BE-${minutes}`;
   if (sport === 'strength') {
     const ab = workout.title.endsWith('A') ? 'A' : 'B';
     return intensity === 'easy' ? `K-${ab}-L` : `K-${ab}`;
