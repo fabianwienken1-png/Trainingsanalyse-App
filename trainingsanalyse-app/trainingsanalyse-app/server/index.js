@@ -33,6 +33,7 @@ const recovery = require('./recovery');
 const auth = require('./auth');
 const athleteHr = require('./athlete-hr');
 const spontaneous = require('./spontaneous');
+const bikes = require('./bikes');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -242,6 +243,7 @@ route('GET', '/api/state', async (req, res) => {
     weekReview: weekReview(s),
     season: planner.seasonOutline(s),
     shoes: shoeStats(s),
+    bikes: bikes.bikeStats(s, recovery.dayKey(new Date())),
     backup: backup.status(s),
     pushSettings: Object.assign(push.settings(s), { publicKey: s.push && s.push.vapid ? s.push.vapid.publicKey : null }),
     performance: performanceInfo(s),
@@ -612,6 +614,34 @@ route('POST', '/api/activities/shoe', async (req, res) => {
   if (body.shoeId) act.shoeId = body.shoeId; else delete act.shoeId;
   await saveStore(s);
   sendJson(res, 200, { ok: true, shoes: shoeStats(s) });
+});
+
+// ---------- Fahrräder & Service ----------
+route('POST', '/api/bikes', async (req, res) => {
+  const body = await parseJsonBody(req);
+  const s = await loadStore();
+  const today = recovery.dayKey(new Date());
+  try {
+    bikes.applyAction(s, body, today);
+  } catch (err) {
+    return sendError(res, 400, err.message);
+  }
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, bikes: bikes.bikeStats(s, today) });
+});
+
+route('POST', '/api/activities/bike', async (req, res) => {
+  const body = await parseJsonBody(req);
+  const s = await loadStore();
+  const act = s.activities.find((a) => a.id === body.id);
+  if (!act) return sendError(res, 404, 'Aktivität nicht gefunden.');
+  if (body.bikeId === 'none') act.bikeId = 'none';
+  else if (body.bikeId) {
+    if (!(s.athlete.bikes || []).some((b) => b.id === body.bikeId)) return sendError(res, 404, 'Rad nicht gefunden.');
+    act.bikeId = body.bikeId;
+  } else delete act.bikeId;
+  await saveStore(s);
+  sendJson(res, 200, { ok: true, bikes: bikes.bikeStats(s, recovery.dayKey(new Date())) });
 });
 
 // Wettkämpfe: speichern (neu/ändern) oder löschen, danach Woche neu planen

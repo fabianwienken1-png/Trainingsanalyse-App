@@ -423,6 +423,7 @@ function renderToday() {
   renderRpePrompt();
   renderWeekReview();
   renderShoeAlert();
+  renderBikeAlert();
 
   // Nächste Einheit
   mount('next-session', renderNextSession(now));
@@ -1458,6 +1459,7 @@ function openActivityDetail(act) {
     el('div', { class: 'detail-grid' }, items.map(([l, v]) => el('div', {}, [el('div', { class: 'label' }, l), el('div', { class: 'value' }, v)]))),
     rpeEditor(act),
     shoeEditor(act),
+    bikeEditor(act),
     typeEditor(act)
   );
   document.getElementById('activity-detail-dialog').showModal();
@@ -1899,6 +1901,168 @@ function shoeEditor(act) {
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// Fahrräder & Service
+// ---------------------------------------------------------------------------
+
+const BIKE_DEFAULT_LABEL = { outdoor: 'Standard draußen', indoor: 'Standard indoor', both: 'Standard für alle Fahrten' };
+
+function fmtBikeKm(km) {
+  return Math.round(km).toLocaleString('de-DE') + ' km';
+}
+
+function serviceDueText(sv) {
+  const parts = [];
+  if (sv.kmLeft !== null && sv.kmLeft !== undefined) {
+    parts.push(sv.kmLeft <= 0 ? `${Math.abs(sv.kmLeft).toLocaleString('de-DE')} km überfällig` : `noch ${sv.kmLeft.toLocaleString('de-DE')} km`);
+  }
+  if (sv.daysLeft !== null && sv.daysLeft !== undefined) {
+    if (sv.daysLeft <= 0) parts.push(sv.daysLeft === 0 ? 'heute fällig' : `seit ${Math.abs(sv.daysLeft)} Tagen fällig`);
+    else parts.push(sv.daysLeft > 60 ? `noch ${Math.round(sv.daysLeft / 30)} Monate` : `noch ${sv.daysLeft} Tage`);
+  }
+  return parts.join(' · ');
+}
+
+function serviceIntervalText(sv) {
+  const p = [];
+  if (sv.intervalKm) p.push(`alle ${sv.intervalKm.toLocaleString('de-DE')} km`);
+  if (sv.intervalMonths) p.push(`alle ${sv.intervalMonths} ${sv.intervalMonths === 1 ? 'Monat' : 'Monate'}`);
+  return p.join(' oder ');
+}
+
+async function bikeAction(payload, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  try { await postJson('/api/bikes', payload); await refresh(); } catch (e) { alert(e.message); }
+}
+
+function renderServiceRow(bike, sv) {
+  const cls = sv.due ? 'over' : sv.soon ? 'warn' : '';
+  const last = sv.lastDate ? `zuletzt ${new Date(sv.lastDate + 'T12:00:00').toLocaleDateString('de-DE')} bei ${fmtBikeKm(sv.lastKm || 0)}` : '';
+  const editBox = el('div', { class: 'service-edit', hidden: true });
+  const kmIn = el('input', { type: 'number', inputmode: 'numeric', min: '0', value: sv.intervalKm || '', placeholder: 'km' });
+  const moIn = el('input', { type: 'number', inputmode: 'numeric', min: '0', value: sv.intervalMonths || '', placeholder: 'Monate' });
+  editBox.append(
+    el('div', { class: 'absence-grid' }, [
+      el('label', { class: 'small muted' }, ['Intervall km', kmIn]),
+      el('label', { class: 'small muted' }, ['oder Monate', moIn])
+    ]),
+    el('div', { class: 'btn-row', style: 'margin-top:8px;gap:14px' }, [
+      el('button', { class: 'secondary-btn', type: 'button', onclick: () => bikeAction({ action: 'editService', id: bike.id, serviceId: sv.id, service: { intervalKm: kmIn.value, intervalMonths: moIn.value } }) }, 'Intervall speichern'),
+      el('button', { class: 'link-btn danger-link', type: 'button', onclick: () => bikeAction({ action: 'deleteService', id: bike.id, serviceId: sv.id }, `Service „${sv.name}“ entfernen?`) }, 'Entfernen')
+    ])
+  );
+  return el('div', { class: 'service-row' }, [
+    el('div', { class: 'top' }, [
+      el('span', {}, [el('strong', {}, sv.name), sv.due ? el('span', { class: 'service-badge over' }, 'fällig') : sv.soon ? el('span', { class: 'service-badge warn' }, 'bald') : null]),
+      el('span', { class: 'race-right small' }, serviceDueText(sv))
+    ]),
+    el('div', { class: 'shoe-bar' }, el('span', { class: cls, style: `width:${Math.min(100, sv.pct)}%` })),
+    el('div', { class: 'muted small', style: 'margin-top:4px' }, [serviceIntervalText(sv), last ? ' · ' + last : '']),
+    el('div', { class: 'btn-row', style: 'margin-top:6px;gap:14px' }, [
+      el('button', { class: 'link-btn', type: 'button', onclick: () => bikeAction({ action: 'resetService', id: bike.id, serviceId: sv.id }, `„${sv.name}“ an „${bike.name}“ als erledigt markieren? Der Zähler startet bei ${fmtBikeKm(bike.km)} neu.`) }, 'Service erledigt ↺'),
+      el('button', { class: 'link-btn', type: 'button', onclick: () => { editBox.hidden = !editBox.hidden; } }, 'Bearbeiten')
+    ]),
+    editBox
+  ]);
+}
+
+function renderBikeCard(bike) {
+  const open = bike.services.some((sv) => sv.due || sv.soon);
+  const svName = el('input', { type: 'text', placeholder: 'z.B. Schaltzug', maxlength: '40' });
+  const svKm = el('input', { type: 'number', inputmode: 'numeric', min: '0', placeholder: 'alle … km' });
+  const svMo = el('input', { type: 'number', inputmode: 'numeric', min: '0', placeholder: 'oder … Monate' });
+  const defaultBtns = ['outdoor', 'indoor', 'both']
+    .filter((k) => bike.defaultFor !== k)
+    .map((k) => el('button', { class: 'link-btn', type: 'button', onclick: () => bikeAction({ action: 'default', id: bike.id, kind: k }) }, { outdoor: 'Standard draußen', indoor: 'Standard indoor', both: 'Standard für alle' }[k]));
+  const details = el('details', { class: 'bike-details' }, [
+    el('summary', {}, [
+      el('div', { class: 'top' }, [
+        el('span', {}, [el('strong', {}, bike.name), bike.defaultFor ? el('span', { class: 'muted small' }, ' · ' + BIKE_DEFAULT_LABEL[bike.defaultFor]) : null]),
+        el('span', { class: 'race-right' }, fmtBikeKm(bike.km))
+      ]),
+      el('div', { class: 'muted small' }, [`${bike.rides} Fahrten erfasst`, bike.services.filter((s) => s.due).length ? el('span', { class: 'service-badge over' }, `${bike.services.filter((s) => s.due).length} fällig`) : bike.services.some((s) => s.soon) ? el('span', { class: 'service-badge warn' }, 'Service bald') : null])
+    ]),
+    el('div', { class: 'bike-body' }, [
+      ...(bike.services.length ? bike.services.map((sv) => renderServiceRow(bike, sv)) : [el('p', { class: 'muted small' }, 'Noch keine Service-Intervalle.')]),
+      el('div', { class: 'label muted small', style: 'margin-top:12px' }, 'Service hinzufügen'),
+      svName,
+      el('div', { class: 'absence-grid', style: 'margin-top:8px' }, [svKm, svMo]),
+      el('button', { class: 'secondary-btn', type: 'button', style: 'margin-top:8px', onclick: () => bikeAction({ action: 'addService', id: bike.id, service: { name: svName.value, intervalKm: svKm.value, intervalMonths: svMo.value } }) }, 'Service hinzufügen'),
+      el('div', { class: 'btn-row', style: 'margin-top:14px;gap:14px;flex-wrap:wrap' }, [
+        ...defaultBtns,
+        bike.defaultFor ? el('button', { class: 'link-btn', type: 'button', onclick: () => bikeAction({ action: 'undefault', id: bike.id }) }, 'Kein Standard') : null,
+        el('button', { class: 'link-btn', type: 'button', onclick: () => bikeAction({ action: 'retire', id: bike.id }, `„${bike.name}“ ausmustern?`) }, 'Ausmustern')
+      ])
+    ])
+  ]);
+  if (open) details.open = true;
+  return details;
+}
+
+function renderBikes() {
+  const bikes = currentState.bikes || [];
+  const active = bikes.filter((b) => !b.retired);
+  const retired = bikes.filter((b) => b.retired);
+  const name = el('input', { type: 'text', placeholder: 'z.B. Canyon Endurace', maxlength: '40' });
+  const startKm = el('input', { type: 'number', inputmode: 'numeric', placeholder: 'bisher km', min: '0' });
+  const kind = el('select', {}, [el('option', { value: 'outdoor' }, 'Straße / draußen'), el('option', { value: 'indoor' }, 'Indoor / Rolle')]);
+  mount('bike-card',
+    ...active.map(renderBikeCard),
+    retired.length ? el('div', { class: 'muted small', style: 'margin-top:8px' }, [
+      'Ausgemustert: ',
+      ...retired.flatMap((b, i) => [i ? ', ' : '', `${b.name} (${fmtBikeKm(b.km)}) `,
+        el('button', { class: 'link-btn', type: 'button', onclick: () => bikeAction({ action: 'unretire', id: b.id }) }, 'reaktivieren')])
+    ]) : null,
+    el('p', { class: 'muted small' }, 'Rad-Einheiten zählen automatisch für das Standard-Rad (draußen bzw. indoor). Im Detail einer Fahrt kannst du ein anderes Rad wählen. Neue Räder bekommen typische Service-Intervalle, die du anpassen kannst.'),
+    el('div', { class: 'absence-grid' }, [name, startKm]),
+    el('div', { class: 'btn-row', style: 'margin-top:8px' }, [
+      kind,
+      el('button', { class: 'secondary-btn', type: 'button', onclick: () => bikeAction({ action: 'save', bike: { name: name.value, startKm: startKm.value, kind: kind.value } }) }, 'Rad hinzufügen')
+    ])
+  );
+}
+
+function renderBikeAlert() {
+  const items = [];
+  for (const b of currentState.bikes || []) {
+    if (b.retired) continue;
+    for (const sv of b.services || []) if (sv.due || sv.soon) items.push({ b, sv });
+  }
+  if (!items.length) { mount('bike-alert'); return; }
+  items.sort((x, y) => y.sv.due - x.sv.due);
+  mount('bike-alert', el('div', { class: 'rec-note bike-alert' }, [
+    el('strong', {}, items.some((i) => i.sv.due) ? 'Rad-Service fällig' : 'Rad-Service steht bald an'),
+    ...items.slice(0, 4).map(({ b, sv }) => el('div', { class: 'bike-alert-row' }, [
+      el('span', {}, [`${sv.name} · ${b.name}`, el('span', { class: 'muted small' }, ' – ' + serviceDueText(sv))]),
+      el('button', { class: 'link-btn', type: 'button', onclick: () => bikeAction({ action: 'resetService', id: b.id, serviceId: sv.id }, `„${sv.name}“ an „${b.name}“ als erledigt markieren?`) }, 'Erledigt')
+    ]))
+  ]));
+}
+
+function bikeEditor(act) {
+  if (!['Ride', 'VirtualRide'].includes(act.type)) return null;
+  const all = currentState.bikes || [];
+  const bikes = all.filter((b) => !b.retired || b.id === act.bikeId);
+  if (!bikes.length) return el('div', { style: 'margin-top:18px;padding-top:14px;border-top:1px solid var(--border)' }, [
+    el('div', { class: 'label muted small', style: 'margin-bottom:6px' }, 'Fahrrad'),
+    el('div', { class: 'muted small' }, 'Lege in den Einstellungen unter „Fahrräder“ dein Rad an, dann zählen hier die Kilometer.')
+  ]);
+  const indoor = act.type === 'VirtualRide' || /innen|indoor/i.test(`${act.name || ''} ${act.rawType || ''}`);
+  const def = bikes.find((b) => !b.retired && (b.defaultFor === 'both' || b.defaultFor === (indoor ? 'indoor' : 'outdoor')));
+  const sel = el('select', {}, [
+    el('option', { value: '' }, def ? `Standard (${def.name})` : 'Standard (kein Rad)'),
+    ...bikes.map((b) => el('option', { value: b.id }, b.name)),
+    el('option', { value: 'none' }, 'Kein Rad zählen')
+  ]);
+  sel.value = act.bikeId || '';
+  sel.addEventListener('change', async () => {
+    try { await postJson('/api/activities/bike', { id: act.id, bikeId: sel.value || null }); act.bikeId = sel.value || undefined; await refresh(); } catch (e) { alert(e.message); }
+  });
+  return el('div', { style: 'margin-top:18px;padding-top:14px;border-top:1px solid var(--border)' }, [
+    el('div', { class: 'label muted small', style: 'margin-bottom:6px' }, 'Fahrrad'), sel
+  ]);
+}
+
 function renderAutoBackup() {
   const b = currentState.backup || {};
   if (!b.enabled) {
@@ -2241,6 +2405,7 @@ function renderSettings() {
   renderPerfForm();
   renderPushCard();
   renderShoes();
+  renderBikes();
   renderAutoBackup();
   const a = currentState.athlete;
   const form = document.getElementById('settings-form');

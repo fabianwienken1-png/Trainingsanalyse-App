@@ -140,6 +140,9 @@ function mergeHealthActivity(store, normalized) {
     // wichtig, wenn Health Auto Export denselben Zeitraum mehrfach sendet
     if (prev.rpe && !normalized.rpe) normalized.rpe = prev.rpe;
     if (prev.rpeSkipped) normalized.rpeSkipped = true;
+    // Zuordnung zu Laufschuh / Fahrrad behalten
+    if (prev.shoeId && !normalized.shoeId) normalized.shoeId = prev.shoeId;
+    if (prev.bikeId && !normalized.bikeId) normalized.bikeId = prev.bikeId;
     store.activities[idx] = normalized;
   } else {
     store.activities.push(normalized);

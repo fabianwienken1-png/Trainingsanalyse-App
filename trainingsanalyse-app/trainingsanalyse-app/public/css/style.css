@@ -634,3 +634,22 @@ input[type="time"] { width: auto; flex: 1; min-width: 0; }
 .season-blocks { display: grid; gap: 6px; margin-top: 12px; font-size: 14px; }
 .season-blocks > div { display: flex; align-items: center; gap: 4px; }
 .season-blocks .t { font-weight: 600; margin-right: auto; }
+
+/* Fahrräder & Service */
+.bike-details { border-bottom: 1px solid var(--border); padding: 10px 0; }
+.bike-details > summary { list-style: none; cursor: pointer; }
+.bike-details > summary::-webkit-details-marker { display: none; }
+.bike-details .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.bike-body { padding-top: 8px; }
+.bike-body input, .bike-body select { width: 100%; box-sizing: border-box; min-width: 0; }
+.service-row { padding: 10px 0; border-top: 1px solid var(--border); }
+.service-row .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.service-edit { margin-top: 8px; }
+.service-edit label { display: flex; flex-direction: column; gap: 4px; }
+.service-badge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--surface-2); }
+.service-badge.warn { color: var(--warning); }
+.service-badge.over { color: var(--danger); }
+.danger-link { color: var(--danger); }
+.bike-alert { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.bike-alert-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+#bike-card .btn-row select { flex: 1; min-width: 0; }
