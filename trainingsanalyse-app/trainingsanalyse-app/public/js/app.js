@@ -1988,6 +1988,7 @@ function renderBikeCard(bike) {
       svName,
       el('div', { class: 'absence-grid', style: 'margin-top:8px' }, [svKm, svMo]),
       el('button', { class: 'secondary-btn', type: 'button', style: 'margin-top:8px', onclick: () => bikeAction({ action: 'addService', id: bike.id, service: { name: svName.value, intervalKm: svKm.value, intervalMonths: svMo.value } }) }, 'Service hinzufügen'),
+      renderBikeSettings(bike),
       el('div', { class: 'btn-row', style: 'margin-top:14px;gap:14px;flex-wrap:wrap' }, [
         ...defaultBtns,
         bike.defaultFor ? el('button', { class: 'link-btn', type: 'button', onclick: () => bikeAction({ action: 'undefault', id: bike.id }) }, 'Kein Standard') : null,
@@ -1997,6 +1998,35 @@ function renderBikeCard(bike) {
   ]);
   if (open) details.open = true;
   return details;
+}
+
+function bikeSinceText(bike) {
+  if (!bike.since || bike.since <= '1900') return 'alle bisherigen Fahrten';
+  return 'Fahrten ab ' + new Date(bike.since + 'T12:00:00').toLocaleDateString('de-DE');
+}
+
+function renderBikeSettings(bike) {
+  const nameIn = el('input', { type: 'text', value: bike.name, maxlength: '40' });
+  const startIn = el('input', { type: 'number', inputmode: 'numeric', min: '0', value: String(bike.startKm || 0) });
+  const sinceIn = el('input', { type: 'date', value: bike.since && bike.since > '1900' ? bike.since : '' });
+  const save = (since) => bikeAction({ action: 'rename', id: bike.id, name: nameIn.value, startKm: startIn.value, since });
+  return el('div', { class: 'bike-settings' }, [
+    el('div', { class: 'label muted small', style: 'margin-top:14px' }, 'Rad-Daten'),
+    el('div', { class: 'muted small', style: 'margin-bottom:6px' }, `Gezählt werden: Start-km + ${bikeSinceText(bike)}${bike.defaultFor ? '' : ' (nur fest zugeordnete)'}.`),
+    el('label', { class: 'small muted' }, ['Name', nameIn]),
+    el('div', { class: 'absence-grid', style: 'margin-top:8px' }, [
+      el('label', { class: 'small muted' }, ['Start-km', startIn]),
+      el('label', { class: 'small muted' }, ['Fahrten zählen ab', sinceIn])
+    ]),
+    el('div', { class: 'btn-row', style: 'margin-top:8px;gap:10px' }, [
+      el('button', { class: 'secondary-btn', type: 'button', onclick: () => save(sinceIn.value || bike.since) }, 'Speichern'),
+      el('button', { class: 'secondary-btn', type: 'button', onclick: () => {
+        if (!confirm(`Alle bisherigen Fahrten als „${bike.name}“ zählen? Start-km wird dabei auf 0 gesetzt, damit nichts doppelt zählt – trag dort nur km ein, die vor deinen aufgezeichneten Fahrten liegen.`)) return;
+        startIn.value = '0';
+        save('');
+      } }, 'Alle bisherigen übernehmen')
+    ])
+  ]);
 }
 
 function renderBikes() {
@@ -2049,8 +2079,11 @@ function bikeEditor(act) {
   ]);
   const indoor = act.type === 'VirtualRide' || /innen|indoor/i.test(`${act.name || ''} ${act.rawType || ''}`);
   const def = bikes.find((b) => !b.retired && (b.defaultFor === 'both' || b.defaultFor === (indoor ? 'indoor' : 'outdoor')));
+  const day = new Date(act.startDate).toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
+  const defLabel = !def ? 'Standard (kein Rad)'
+    : day < (def.since || '0000') ? `Standard – zählt erst ab ${new Date(def.since + 'T12:00:00').toLocaleDateString('de-DE')}` : `Standard (${def.name})`;
   const sel = el('select', {}, [
-    el('option', { value: '' }, def ? `Standard (${def.name})` : 'Standard (kein Rad)'),
+    el('option', { value: '' }, defLabel),
     ...bikes.map((b) => el('option', { value: b.id }, b.name)),
     el('option', { value: 'none' }, 'Kein Rad zählen')
   ]);

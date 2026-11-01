@@ -165,7 +165,12 @@ function applyAction(s, body, today) {
       const name = String(body.name || '').trim().slice(0, 40);
       if (!name) throw new Error('Bitte einen Namen angeben.');
       bike.name = name;
-      if (body.startKm !== undefined) bike.startKm = Math.max(0, Math.round(Number(body.startKm) || 0));
+      if (body.startKm !== undefined && body.startKm !== '') bike.startKm = Math.max(0, Math.round(Number(body.startKm) || 0));
+      if (body.since !== undefined) {
+        // leer = alle bisherigen Fahrten übernehmen
+        if (body.since && !/^\d{4}-\d{2}-\d{2}$/.test(body.since)) throw new Error('Ungültiges Datum.');
+        bike.since = body.since || '0000-01-01';
+      }
       break;
     }
     case 'default': {
