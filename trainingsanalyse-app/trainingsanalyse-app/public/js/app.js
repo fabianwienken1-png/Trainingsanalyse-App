@@ -1217,26 +1217,137 @@ function renderNextWeek() {
 
 const PHASE_COLOR = { base: '#5cc8f2', build: '#f5b544', peak: '#f2685c', recovery: '#4ed17a', taper: '#9b8cf2', race: '#d4f25c', post: '#6b6f78' };
 
+// Ausführliche Erklärungen je Phase. why(ctx) liefert die Begründung mit deinen Zahlen.
+const PHASE_INFO = {
+  base: {
+    goal: 'Den Motor bauen: Herz-Kreislauf, Fettstoffwechsel, mehr Kapillaren und Mitochondrien in der Muskulatur. Dazu Technik (vor allem Schwimmen) und Kraft als Verletzungsschutz.',
+    content: ['Rund 80 % der Zeit locker (Zone 1–2) – du kannst dich dabei unterhalten', 'Eine fordernde Einheit pro Woche, damit die Intensität nicht ganz einschläft', 'Volles Krafttraining (2×/Woche) – jetzt stört es am wenigsten', 'Umfang steigt Woche für Woche, solange Form, Erholung und Erfüllungsquote passen'],
+    why: (c) => `Alles, was mehr als 16 Wochen vor dem Wettkampf liegt, ist Grundlage. ${c.n ? `Bei dir sind das ${c.n} Wochen, weil der Wettkampf erst am ${c.raceDate} ist.` : ''} Die aerobe Basis braucht Monate und lässt sich später nicht im Schnellverfahren nachholen – je breiter sie ist, desto mehr Intensität verträgst du in den späteren Phasen.`
+  },
+  build: {
+    goal: 'Die Schwelle anheben: Das Tempo, das du lange halten kannst, wird schneller. Dazu VO2max-Reize für mehr Spitzenleistung.',
+    content: ['Zwei fordernde Einheiten pro Woche (z. B. Sweet Spot auf dem Rad, unterschwellige Intervalle beim Laufen)', 'Der Umfang bleibt hoch – die Grundlage wird gehalten, nicht abgebaut', 'Kraft weiter 2×/Woche, schwerer mit wenigen Wiederholungen', 'Jede 4. Woche Entlastung, damit die zusätzliche Intensität verarbeitet wird'],
+    why: () => '16 bis 9 Wochen vor dem Wettkampf = 8 Wochen, also zwei Blöcke aus je 3 Belastungs- und 1 Entlastungswoche. Die Schwelle braucht etwa 6–8 Wochen gezielte Reize, um sich messbar zu verbessern. Kürzer reicht nicht, länger würde den Körper zu früh an die Grenze bringen.'
+  },
+  peak: {
+    goal: 'Wettkampfspezifisch werden: Der Körper lernt genau das, was am Renntag verlangt wird – Renntempo, Wechsel, lange Belastung.',
+    content: ['Koppeltraining Rad + Lauf, damit sich die Beine nach dem Rad schneller ans Laufen gewöhnen', 'Intervalle im und knapp über Renntempo', 'Längste Einheiten der Saison, näher an der Wettkampfdauer', 'Verpflegung im Training testen (nichts Neues am Renntag)'],
+    why: (c) => `Die letzten 8 Wochen vor dem Wettkampf abzüglich ${c.taper} Wochen Tapering = ${8 - c.taper} Wochen. Spezifische Reize wirken am besten kurz vor dem Ziel – ein früherer Start würde Ermüdung aufbauen, ohne dass die Form am Renntag besser ist.`
+  },
+  recovery: {
+    goal: 'Verarbeiten: Die Anpassung an das Training passiert in der Erholung, nicht während der Belastung.',
+    content: ['Umfang auf etwa 65 % reduziert', 'Nur lockere Einheiten, keine harten Intervalle', 'Kraft maximal 1×', 'Gute Woche für Schlaf, Technik und Beweglichkeit'],
+    why: (c) => `Jede ${c.every}. Woche (3:1-Rhythmus) – bewährt, weil sich Ermüdung über etwa drei Belastungswochen aufbaut. Die Wochen werden vom Tapering aus rückwärts gezählt, damit der Rhythmus genau zum Wettkampf aufgeht. Zusätzlich zieht die App eine Entlastung vor, wenn HRV, Erholung und Anstrengung gleichzeitig Alarm geben.`
+  },
+  taper: {
+    goal: 'Frisch werden: Ermüdung baut schneller ab als Fitness. Mit weniger Umfang kommst du ausgeruht, aber mit voller Form an den Start.',
+    content: ['Umfang stufenweise runter (erst ~75 %, dann ~60 %)', 'Kurze Intensitäten bleiben drin, damit die Beine „wach“ bleiben', 'Kraft maximal 1× und leichter', 'Viel Schlaf, normal essen, Material checken'],
+    why: (c) => `${c.taper} Wochen, passend zur Distanz${c.dist ? ` (${c.dist})` : ''}. Ermüdung ist nach etwa 1–3 Wochen weg, Fitness geht in dieser Zeit kaum verloren. Längeres Tapering würde dagegen schon Form kosten.`
+  },
+  race: {
+    goal: 'Ankommen in Bestform: nichts mehr aufbauen, nur noch frisch bleiben.',
+    content: ['Nur kurze, lockere Einheiten mit ein paar Steigerungen', 'Etwa 40 % des normalen Umfangs', 'Kein Krafttraining', 'In den letzten 1–2 Tagen mehr Kohlenhydrate, viel schlafen'],
+    why: () => 'Die Woche des Wettkampfs. Fitness kannst du jetzt nicht mehr dazugewinnen, aber durch zu viel Training viel verlieren.'
+  },
+  post: {
+    goal: 'Regenerieren: Muskeln, Sehnen und Kopf erholen sich vom Wettkampf.',
+    content: ['Nur locker bewegen, gern auch etwas ganz anderes', 'Etwa 40 % des Umfangs', 'Kein hartes Training, auch wenn du dich gut fühlst'],
+    why: () => 'Eine Woche nach dem Wettkampf. Kleine Muskelschäden und die Erschöpfung der Energiespeicher brauchen mehrere Tage; wer zu früh wieder hart trainiert, riskiert Verletzungen und einen Formeinbruch.'
+  }
+};
+
+let seasonSelected = 0;
+
+function seasonWeekDetail(se, i) {
+  const w = se.weeks[i];
+  if (!w) return null;
+  const info = PHASE_INFO[w.phase] || {};
+  const fmtD = (k) => new Date(k + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  const facts = [
+    ['Umfang', `ca. ${String(w.estHours).replace('.', ',')} h${w.volumePct < 100 ? ` (bewusst ${w.volumePct} %)` : w.atCap ? ' (deine Obergrenze)' : ''}`],
+    w.quality !== null && w.quality !== undefined ? ['Fordernde Einheiten', String(w.quality)] : null,
+    ['Kraft', `${w.strength}×`],
+    w.weeksTo !== null && w.weeksTo > 0 ? ['Bis zum Wettkampf', `${w.weeksTo} ${w.weeksTo === 1 ? 'Woche' : 'Wochen'}`] : null
+  ].filter(Boolean);
+  return el('div', { class: 'season-detail' }, [
+    el('div', { class: 'top' }, [
+      el('strong', {}, `KW ${isoWeek(new Date(w.week + 'T12:00:00'))} · ${fmtD(w.week)} – ${fmtD(addDaysKey(w.week, 6))}${i === 0 ? ' · diese Woche' : ''}`),
+      el('span', { class: 'phase-chip', style: `background:${PHASE_COLOR[w.phase]}` }, w.label)
+    ]),
+    el('div', { class: 'detail-grid', style: 'margin-top:10px' }, facts.map(([l, v]) => el('div', {}, [el('div', { class: 'label' }, l), el('div', { class: 'value small-value' }, v)]))),
+    w.races.length ? el('div', { class: 'small', style: 'margin-top:8px' }, '🏁 ' + w.races.map((r) => `${r.name} (${r.priority}) am ${fmtD(r.date)}`).join(', ')) : null,
+    info.goal ? el('p', { class: 'small', style: 'margin:10px 0 0' }, info.goal) : null
+  ]);
+}
+
 function renderSeason() {
   const se = currentState.season;
   if (!se || !se.weeks || se.weeks.length < 2) { mount('plan-season'); return; }
   const weeks = se.weeks;
-  const bar = el('div', { class: 'season-bar' }, weeks.map((w, i) => el('div', {
-    class: `season-week${i === 0 ? ' now' : ''}`,
-    style: `background:${PHASE_COLOR[w.phase] || '#6b6f78'}`,
-    title: `KW ${isoWeek(new Date(w.week + 'T12:00:00'))}: ${w.label}`
-  }, w.races.length ? el('span', { class: `season-flag p${w.races[0].priority}` }, w.races[0].priority) : null)));
-  // Phasenblöcke zusammenfassen
+  if (seasonSelected >= weeks.length) seasonSelected = 0;
+  const detailBox = el('div', {});
+  const bar = el('div', { class: 'season-bar' }, weeks.map((w, i) => {
+    const node = el('button', {
+      type: 'button',
+      class: `season-week${i === 0 ? ' now' : ''}${i === seasonSelected ? ' sel' : ''}`,
+      style: `background:${PHASE_COLOR[w.phase] || '#6b6f78'}`,
+      'aria-label': `KW ${isoWeek(new Date(w.week + 'T12:00:00'))}: ${w.label}`
+    }, w.races.length ? el('span', { class: `season-flag p${w.races[0].priority}` }, w.races[0].priority) : null);
+    node.addEventListener('click', () => {
+      seasonSelected = i;
+      bar.querySelectorAll('.season-week').forEach((b, j) => b.classList.toggle('sel', j === i));
+      detailBox.replaceChildren(seasonWeekDetail(se, i));
+    });
+    return node;
+  }));
+  detailBox.appendChild(seasonWeekDetail(se, seasonSelected));
+
+  // Phasenblöcke zusammenfassen (Entlastungswochen gehören zur umgebenden Phase)
   const blocks = [];
   for (const w of weeks) {
     const last = blocks[blocks.length - 1];
-    // Entlastungswochen gehören zur umgebenden Phase
     if (last && (last.phase === w.phase || w.phase === 'recovery')) { last.end = w.week; last.n++; if (w.phase === 'recovery') last.deload++; }
     else blocks.push({ phase: w.phase, label: w.label, start: w.week, end: w.week, n: 1, deload: w.phase === 'recovery' ? 1 : 0 });
   }
-  const main = blocks;
   const fmt = (k) => new Date(k + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' });
+  const raceDate = se.goalDate ? new Date(se.goalDate + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' }) : null;
   const races = weeks.flatMap((w) => w.races);
+  const hours = weeks.map((w) => w.estHours);
+  const ctxFor = (b) => ({ n: b.n, raceDate, taper: se.taperWeeks, dist: se.distanceLabel, every: se.deloadEvery });
+
+  const blockNodes = blocks.map((b) => {
+    const info = PHASE_INFO[b.phase] || {};
+    return el('details', { class: 'season-phase' }, [
+      el('summary', {}, [
+        el('span', { class: 'dot', style: `background:${PHASE_COLOR[b.phase]}` }),
+        el('span', { class: 't' }, b.label),
+        el('span', { class: 'muted' }, `${fmt(b.start)} – ${fmt(addDaysKey(b.end, 6))} · ${b.n} Wo.${b.deload ? ` (${b.deload}× Entl.)` : ''}`),
+        el('span', { class: 'chev' }, '›')
+      ]),
+      el('div', { class: 'season-phase-body' }, [
+        info.goal ? el('p', {}, [el('strong', {}, 'Ziel: '), info.goal]) : null,
+        info.content ? el('ul', {}, info.content.map((c) => el('li', {}, c))) : null,
+        info.why ? el('p', {}, [el('strong', {}, 'Warum so lang: '), info.why(ctxFor(b))]) : null,
+        b.deload && b.phase !== 'recovery' ? el('p', { class: 'muted' }, `Enthält ${b.deload} Entlastungswoche${b.deload > 1 ? 'n' : ''}: ${PHASE_INFO.recovery.goal}`) : null
+      ])
+    ]);
+  });
+  // Entlastungswochen separat erklären, falls sie nicht schon als eigener Block auftauchen
+  if (!blocks.some((b) => b.phase === 'recovery') && weeks.some((w) => w.phase === 'recovery')) {
+    blockNodes.push(el('details', { class: 'season-phase' }, [
+      el('summary', {}, [el('span', { class: 'dot', style: `background:${PHASE_COLOR.recovery}` }), el('span', { class: 't' }, 'Entlastungswochen'), el('span', { class: 'muted' }, `${weeks.filter((w) => w.phase === 'recovery').length}× in der Saison`), el('span', { class: 'chev' }, '›')]),
+      el('div', { class: 'season-phase-body' }, [
+        el('p', {}, [el('strong', {}, 'Ziel: '), PHASE_INFO.recovery.goal]),
+        el('ul', {}, PHASE_INFO.recovery.content.map((c) => el('li', {}, c))),
+        el('p', {}, [el('strong', {}, 'Warum: '), PHASE_INFO.recovery.why(ctxFor({}))])
+      ])
+    ]));
+  }
+
+  const intro = se.goalDate
+    ? `Der Plan wird vom Wettkampf am ${raceDate} rückwärts gerechnet: zuerst ${se.taperWeeks} Wochen Tapering, davor ${8 - se.taperWeeks} Wochen wettkampfspezifisches Training, davor 8 Wochen Aufbau – alles davor ist Grundlage. So liegt die Spitzenform genau am Renntag. Der Umfang steigt in normalen Wochen um bis zu ${se.increasePct} %, bis deine verfügbaren ${se.weeklyHours} h erreicht sind.`
+    : `Ohne Zielwettkampf wechseln sich Grundlagenwochen und Entlastungswochen (jede ${se.deloadEvery}. Woche) ab. Trag im Ziel-Tab einen Wettkampf ein, dann wird die Saison darauf ausgerichtet.`;
+
   mount('plan-season', el('div', { class: 'card' }, [
     el('div', { class: 'card-head', style: 'margin:0 0 10px' }, [
       el('h2', {}, se.goalName ? `Saison bis ${se.goalName}` : 'Die nächsten Wochen'),
@@ -1246,13 +1357,12 @@ function renderSeason() {
     el('div', { class: 'season-legend' }, [...new Set(weeks.map((w) => w.phase))].map((p) => el('span', {}, [
       el('span', { class: 'dot', style: `background:${PHASE_COLOR[p]}` }), weeks.find((w) => w.phase === p).label
     ]))),
-    el('div', { class: 'season-blocks' }, main.map((b) => el('div', {}, [
-      el('span', { class: 'dot', style: `background:${PHASE_COLOR[b.phase]}` }),
-      el('span', { class: 't' }, b.label),
-      el('span', { class: 'muted' }, `${fmt(b.start)} – ${fmt(addDaysKey(b.end, 6))} · ${b.n} Wo.${b.deload ? ` (${b.deload}× Entl.)` : ''}`)
-    ]))),
-    races.length ? el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Wettkämpfe: ' + races.map((r) => `${r.name} (${r.priority}, ${fmt(r.date)})`).join(' · ')) : null,
-    el('div', { class: 'muted small', style: 'margin-top:6px' }, 'Grüne Wochen sind Entlastungswochen. Die genaue Planung jeder Woche passt sich deinen Daten an.')
+    el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Tippe auf eine Woche für Details.'),
+    detailBox,
+    el('p', { class: 'small season-intro' }, intro),
+    el('div', { class: 'season-blocks' }, blockNodes),
+    races.length ? el('div', { class: 'muted small', style: 'margin-top:10px' }, 'Wettkämpfe: ' + races.map((r) => `${r.name} (${r.priority}, ${fmt(r.date)})`).join(' · ')) : null,
+    el('div', { class: 'muted small', style: 'margin-top:6px' }, `Umfang je Woche ist ein Richtwert (${String(Math.min(...hours)).replace('.', ',')}–${String(Math.max(...hours)).replace('.', ',')} h). Jede Woche wird am Montag neu entschieden – nach Form, Erholung, HRV, gefühlter Anstrengung und wie viel du in der Vorwoche geschafft hast.`)
   ]));
 }
 

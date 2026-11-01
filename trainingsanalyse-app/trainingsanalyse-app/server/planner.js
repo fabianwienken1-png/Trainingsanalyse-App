@@ -826,19 +826,52 @@ function seasonOutline(store, now = new Date()) {
   if (goal.date) count = Math.min(52, Math.max(1, Math.round((new Date(mondayKeyOf(goal.date) + 'T00:00:00Z') - new Date(start + 'T00:00:00Z')) / (7 * DAY_MS)) + 2));
   const races = getRaces(athlete);
   const weeks = [];
+  // Richtwert für den Umfang: Startwert = aktuelle Basis, +Steigerung je normaler
+  // Woche bis zur Obergrenze der verfügbaren Zeit (tatsächlich entscheidet jede
+  // Woche neu anhand von Form, Erholung, RPE und Erfüllungsquote).
+  const cap = athlete.weeklyIncreaseCap ?? 0.1;
+  let base = plan.lastDecision && plan.lastDecision.baseMinutes;
+  let prevKey = null;
   for (let i = 0; i < count; i++) {
     const key = addDaysKey(start, i * 7);
     const g = getGoal(athlete, key);
-    const ph = i === 0 && plan.lastDecision ? { key: plan.lastDecision.phase, label: plan.lastDecision.phaseLabel } : phaseFor(g, key, (plan.weekIndex || 0) + i, athlete.deloadEveryNWeeks);
+    const full = phaseFor(g, key, (plan.weekIndex || 0) + i, athlete.deloadEveryNWeeks);
+    const ph = i === 0 && plan.lastDecision ? Object.assign({}, full, PHASES[plan.lastDecision.phase] || {}, { key: plan.lastDecision.phase, label: plan.lastDecision.phaseLabel }) : full;
     const end = addDaysKey(key, 6);
+    const availMin = g.weeklyHours * 60;
+    const strength = strengthCountFor(g, ph);
+    const enduranceCap = Math.max(90, availMin - strength * 45);
+    if (!base) base = enduranceCap * 0.5;
+    else if (i > 0 && !['recovery', 'taper', 'race', 'post'].includes(prevKey)) base = base * (1 + cap);
+    base = Math.min(enduranceCap, Math.max(120, base));
+    prevKey = ph.key;
+    const enduranceMin = Math.round(base * (ph.volume ?? 1));
     weeks.push({
       week: key,
       phase: ph.key,
       label: ph.label,
+      weeksTo: ph.weeksTo ?? null,
+      volumePct: Math.round((ph.volume ?? 1) * 100),
+      quality: ph.quality ?? null,
+      strength,
+      estHours: Math.round(((enduranceMin + strength * 45) / 60) * 2) / 2,
+      atCap: base >= enduranceCap - 1,
       races: races.filter((r) => r.date >= key && r.date <= end).map((r) => ({ name: r.name || DISTANCES[r.distance].label, priority: r.priority, date: r.date }))
     });
   }
-  return { goalName: goal.name || (goal.distance !== 'none' ? DISTANCES[goal.distance].label : null), weeks };
+  const dist = DISTANCES[goal.distance] || {};
+  return {
+    goalName: goal.name || (goal.distance !== 'none' ? DISTANCES[goal.distance].label : null),
+    goalDate: goal.date || null,
+    distance: goal.distance,
+    distanceLabel: dist.label || null,
+    distanceType: dist.type || 'tri',
+    taperWeeks: dist.taperWeeks || 2,
+    weeklyHours: goal.weeklyHours,
+    increasePct: Math.round(cap * 100),
+    deloadEvery: athlete.deloadEveryNWeeks || 4,
+    weeks
+  };
 }
 
 // Für Abwärtskompatibilität (alter Button "Neue Woche planen")

@@ -655,3 +655,23 @@ input[type="time"] { width: auto; flex: 1; min-width: 0; }
 #bike-card .btn-row select { flex: 1; min-width: 0; }
 .bike-settings label { display: flex; flex-direction: column; gap: 4px; }
 .bike-settings .btn-row .secondary-btn { flex: 1; }
+
+/* Saison-Erklärungen */
+button.season-week { border: none; padding: 0; cursor: pointer; }
+.season-week.sel { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+.season-week.now.sel { outline-color: var(--accent); }
+.season-detail { margin-top: 12px; padding: 12px; border-radius: 12px; background: var(--surface-2); }
+.season-detail .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.phase-chip { font-size: 12px; font-weight: 600; color: #111; padding: 2px 8px; border-radius: 8px; }
+.season-detail .small-value { font-size: 18px; }
+.season-intro { margin: 14px 0 4px; line-height: 1.45; }
+.season-blocks { gap: 0; }
+.season-phase { border-top: 1px solid var(--border); }
+.season-phase > summary { list-style: none; display: flex; align-items: center; gap: 4px; padding: 10px 0; cursor: pointer; }
+.season-phase > summary::-webkit-details-marker { display: none; }
+.season-phase .chev { margin-left: 8px; color: var(--muted); transition: transform .15s; }
+.season-phase[open] .chev { transform: rotate(90deg); }
+.season-phase-body { font-size: 14px; line-height: 1.45; padding: 0 0 12px 14px; }
+.season-phase-body p { margin: 0 0 8px; }
+.season-phase-body ul { margin: 0 0 8px; padding-left: 18px; }
+.season-phase-body li { margin-bottom: 3px; }
