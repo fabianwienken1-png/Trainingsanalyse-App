@@ -791,41 +791,63 @@ function strengthSets(st) {
       el('span', { class: 'set-sub' }, [x.kg ? `${x.pct} 1RM` : null, x.rir].filter(Boolean).join(' · '))
     ]))),
     el('button', { class: 'set-ref-btn', type: 'button', onclick: () => openStrengthDialog(st) },
-      st.oneRM ? `1RM ≈ ${st.oneRM} kg (aus ${String(st.ref.weight).replace('.', ',')} kg × ${st.ref.reps}) · ändern` : '1RM eintragen → kg anzeigen')
+      !st.oneRM ? '1RM eintragen → kg anzeigen'
+        : st.ref && st.ref.source === 'set' ? `1RM ≈ ${st.oneRM} kg (aus ${String(st.ref.weight).replace('.', ',')} kg × ${st.ref.reps}) · ändern`
+          : `1RM ${String(st.oneRM).replace('.', ',')} kg (gemessen ${fmtShortDate(st.ref && st.ref.date)}) · ändern`)
   ]);
 }
 
 let strengthStep = null;
+let strengthMode = 'test';
+function setStrengthMode(mode) {
+  strengthMode = mode;
+  document.querySelectorAll('#strength-mode .filter-chip').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+  document.getElementById('strength-test-fields').hidden = mode !== 'test';
+  document.getElementById('strength-set-fields').hidden = mode !== 'set';
+  updateStrengthPreview();
+}
+
 function openStrengthDialog(st) {
   strengthStep = st;
+  const ref = st.ref;
   document.getElementById('strength-ex-name').textContent = st.text.split(' – ')[0];
-  document.getElementById('strength-weight').value = st.ref ? st.ref.weight : '';
-  document.getElementById('strength-reps').value = st.ref ? st.ref.reps : '';
-  document.getElementById('strength-delete-btn').hidden = !st.ref;
-  updateStrengthPreview();
+  document.getElementById('strength-onerm').value = st.oneRM && (!ref || ref.source === 'test') ? String(st.oneRM).replace('.', ',') : '';
+  document.getElementById('strength-weight').value = ref && ref.source === 'set' ? ref.weight : '';
+  document.getElementById('strength-reps').value = ref && ref.source === 'set' ? ref.reps : '';
+  document.getElementById('strength-delete-btn').hidden = !ref;
+  setStrengthMode(ref && ref.source === 'set' ? 'set' : 'test');
   document.getElementById('strength-dialog').showModal();
 }
 
+function parseKg(v) { return Number(String(v).replace(',', '.')); }
+
 function updateStrengthPreview() {
-  const w = Number(document.getElementById('strength-weight').value.replace(',', '.'));
-  const r = Number(document.getElementById('strength-reps').value);
   const out = document.getElementById('strength-preview');
+  if (strengthMode === 'test') { out.textContent = ''; return; }
+  const w = parseKg(document.getElementById('strength-weight').value);
+  const r = Number(document.getElementById('strength-reps').value);
   if (w > 0 && r >= 1 && r <= 12) out.textContent = `Geschätztes 1RM: ${Math.round(r === 1 ? w : w * (1 + r / 30))} kg`;
   else if (r > 12) out.textContent = 'Bitte einen Satz mit höchstens 12 Wiederholungen – darüber wird die Schätzung ungenau.';
   else out.textContent = '';
 }
 
-async function saveStrengthRef(weight, reps) {
+async function postStrength(payload) {
+  const res = await fetch('/api/strength', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Unbekannter Fehler');
+  return res.json();
+}
+
+async function afterStrengthChange() {
+  await refresh();
+  if (document.getElementById('session-detail-dialog').open && openSessionId) openSessionDetail(openSessionId);
+  if (document.getElementById('spontan-dialog').open) loadSpontan();
+}
+
+async function saveStrengthRef(payload) {
   try {
-    const res = await fetch('/api/strength', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ exercise: strengthStep.exercise, weight, reps })
-    });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Unbekannter Fehler');
+    await postStrength(Object.assign({ exercise: strengthStep.exercise }, payload));
     document.getElementById('strength-dialog').close();
-    await refresh();
-    if (document.getElementById('session-detail-dialog').open && openSessionId) openSessionDetail(openSessionId);
-    if (document.getElementById('spontan-dialog').open) loadSpontan();
+    await afterStrengthChange();
   } catch (err) {
     alert('Konnte nicht gespeichert werden: ' + err.message);
   }
@@ -835,13 +857,62 @@ function setupStrengthDialog() {
   const dlg = document.getElementById('strength-dialog');
   document.getElementById('close-strength-btn').addEventListener('click', () => dlg.close());
   dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+  document.querySelectorAll('#strength-mode .filter-chip').forEach((b) => b.addEventListener('click', () => setStrengthMode(b.dataset.mode)));
   document.getElementById('strength-weight').addEventListener('input', updateStrengthPreview);
   document.getElementById('strength-reps').addEventListener('input', updateStrengthPreview);
-  document.getElementById('strength-delete-btn').addEventListener('click', () => saveStrengthRef(null, null));
+  document.getElementById('strength-delete-btn').addEventListener('click', () => saveStrengthRef({}));
   document.getElementById('strength-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    saveStrengthRef(Number(document.getElementById('strength-weight').value.replace(',', '.')), Number(document.getElementById('strength-reps').value));
+    if (strengthMode === 'test') {
+      const v = document.getElementById('strength-onerm').value.trim();
+      if (!v) { alert('Bitte dein gemessenes 1RM eintragen.'); return; }
+      saveStrengthRef({ oneRM: v });
+    } else {
+      const w = document.getElementById('strength-weight').value.trim();
+      const r = document.getElementById('strength-reps').value;
+      if (!w || !r) { alert('Bitte Gewicht und Wiederholungen eintragen.'); return; }
+      saveStrengthRef({ weight: w, reps: r });
+    }
   });
+
+  // Einstellungen: alle Übungen auf einmal
+  document.getElementById('strength-settings-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.submitter;
+    const values = {};
+    document.querySelectorAll('#strength-settings-list input[data-key]').forEach((inp) => { values[inp.dataset.key] = inp.value.trim() || null; });
+    try {
+      await postStrength({ values });
+      document.activeElement && document.activeElement.blur();
+      await afterStrengthChange();
+      if (btn) { btn.textContent = 'Gespeichert ✓'; setTimeout(() => { btn.textContent = 'Speichern'; }, 1500); }
+    } catch (err) {
+      alert('Speichern fehlgeschlagen: ' + err.message);
+    }
+  });
+}
+
+function renderStrengthSettings() {
+  const ov = currentState && currentState.strength;
+  const form = document.getElementById('strength-settings-form');
+  if (!ov || form.contains(document.activeElement)) return;
+  const row = (x) => el('div', { class: 'rm-row' }, [
+    el('label', { for: `rm-${x.key}` }, [x.name, x.note ? el('span', { class: 'muted' }, ` (${x.note})`) : null,
+      x.ref ? el('span', { class: 'rm-src' }, x.ref.source === 'test' ? `gemessen ${fmtShortDate(x.ref.date)}` : `geschätzt aus ${String(x.ref.weight).replace('.', ',')} kg × ${x.ref.reps}`) : null]),
+    el('div', { class: 'rm-input' }, [
+      el('input', { id: `rm-${x.key}`, type: 'text', inputmode: 'decimal', placeholder: '–', value: x.oneRM ? String(x.oneRM).replace('.', ',') : '', 'data-key': x.key }),
+      el('span', { class: 'muted' }, 'kg')
+    ])
+  ]);
+  mount('strength-settings-list',
+    el('div', { class: 'rm-group' }, 'Einheit A'), ...ov.A.map(row),
+    el('div', { class: 'rm-group' }, 'Einheit B'), ...ov.B.map(row));
+}
+
+function fmtShortDate(key) {
+  if (!key) return '';
+  const [, m, d] = key.split('-');
+  return `${Number(d)}.${Number(m)}.`;
 }
 
 function workoutCard(w, whyTitle = 'Warum dieser Vorschlag?') {
@@ -2367,6 +2438,7 @@ function renderAutoBackup() {
 
 // Leistung: Lauf-Bestzeit und FTP
 function renderPerfForm() {
+  renderStrengthSettings();
   const p = currentState.performance || {};
   const form = document.getElementById('perf-form');
   if (!form.contains(document.activeElement)) {

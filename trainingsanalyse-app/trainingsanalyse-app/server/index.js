@@ -219,6 +219,7 @@ route('GET', '/api/state', async (req, res) => {
   }
   sendJson(res, 200, {
     athlete: s.athlete,
+    strength: strength.overview(s.athlete),
     strava: {
       connected: s.strava.connected,
       athleteId: s.strava.athleteId,
@@ -796,7 +797,19 @@ route('POST', '/api/strength', async (req, res) => {
   }
   const s = await loadStore();
   try {
-    const ref = strength.saveReference(s.athlete, body.exercise, body.weight, body.reps);
+    // Mehrere auf einmal (Einstellungen): { values: { legpress: 150, legcurl: null, ... } }
+    if (body.values && typeof body.values === 'object') {
+      for (const [key, v] of Object.entries(body.values)) {
+        const cur = s.athlete.strength && s.athlete.strength[key];
+        const empty = v === null || v === undefined || v === '';
+        if (empty) { if (cur) strength.saveReference(s.athlete, key, {}); continue; }
+        if (cur && strength.half(cur.oneRM) === strength.half(Number(String(v).replace(',', '.')))) continue; // unverändert
+        strength.saveReference(s.athlete, key, { oneRM: v });
+      }
+      await saveStore(s);
+      return sendJson(res, 200, { strength: strength.overview(s.athlete) });
+    }
+    const ref = strength.saveReference(s.athlete, body.exercise, { oneRM: body.oneRM, weight: body.weight, reps: body.reps });
     await saveStore(s);
     sendJson(res, 200, { exercise: body.exercise, ref });
   } catch (err) {

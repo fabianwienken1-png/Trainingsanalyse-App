@@ -39,9 +39,9 @@ function estimateOneRM(weight, reps) {
   return weight * (1 + Math.min(reps, 12) / 30);
 }
 
-// Technogym-Steckgewichte springen meist in 2,5- bzw. 5-kg-Schritten
+// Biostrength-Geräte stellen den Widerstand elektronisch ein → auf 1 kg runden
 function roundKg(kg) {
-  return Math.round(kg / 2.5) * 2.5;
+  return Math.round(kg);
 }
 
 function fmtKg(kg) {
@@ -79,8 +79,8 @@ function mainExercise(key, scheme, athlete) {
     label: `${scheme.sets} × ${scheme.reps}`,
     text: `${ex.name}${ex.note ? ` (${ex.note})` : ''} – 2–3 min Pause`,
     exercise: key,
-    oneRM: oneRM ? Math.round(oneRM) : null,
-    ref: ref ? { weight: ref.weight, reps: ref.reps, date: ref.date } : null,
+    oneRM: oneRM ? half(oneRM) : null,
+    ref: refInfo(ref),
     sets
   };
 }
@@ -93,27 +93,53 @@ function accessoryExercise(key, athlete) {
     label: `${ACCESSORY.sets} × ${ACCESSORY.reps}`,
     text: `${ex.name}${ex.note ? ` (${ex.note})` : ''} – 60–90 s Pause`,
     exercise: key,
-    oneRM: oneRM ? Math.round(oneRM) : null,
-    ref: ref ? { weight: ref.weight, reps: ref.reps, date: ref.date } : null,
+    oneRM: oneRM ? half(oneRM) : null,
+    ref: refInfo(ref),
     sets: [{ label: `${ACCESSORY.sets} Sätze`, reps: ACCESSORY.reps, pct: pctText(ACCESSORY.pct), kg: kgRange(oneRM, ACCESSORY.pct), rir: rirText(ACCESSORY.rir) }]
   };
 }
 
-// Referenzsatz speichern (weight/reps) oder löschen (weight null)
-function saveReference(athlete, key, weight, reps, now = new Date()) {
+function half(v) { return Math.round(v * 2) / 2; }
+
+function refInfo(ref) {
+  if (!ref) return null;
+  return { source: ref.source || 'set', weight: ref.weight || null, reps: ref.reps || null, date: ref.date };
+}
+
+// 1RM speichern: gemessen ({oneRM}, z.B. Biostrength-Test) oder aus einem
+// Satz geschätzt ({weight, reps}). Alles leer = Eintrag löschen.
+function saveReference(athlete, key, input, now = new Date()) {
   if (!EXERCISES[key]) throw new Error('Unbekannte Übung.');
   athlete.strength = athlete.strength || {};
-  if (weight === null || weight === undefined || weight === '') {
+  const empty = (v) => v === null || v === undefined || v === '';
+  const date = now.toISOString().slice(0, 10);
+  if (!empty(input.oneRM)) {
+    const v = Number(String(input.oneRM).replace(',', '.'));
+    if (!(v > 0 && v <= 500)) throw new Error('1RM zwischen 0 und 500 kg angeben.');
+    athlete.strength[key] = { source: 'test', oneRM: Math.round(v * 10) / 10, date };
+    return athlete.strength[key];
+  }
+  if (empty(input.weight)) {
     delete athlete.strength[key];
     return null;
   }
-  const w = Number(weight);
-  const r = Math.round(Number(reps));
+  const w = Number(String(input.weight).replace(',', '.'));
+  const r = Math.round(Number(input.reps));
   if (!(w > 0 && w <= 500)) throw new Error('Gewicht zwischen 0 und 500 kg angeben.');
   if (!(r >= 1 && r <= 12)) throw new Error('Wiederholungen zwischen 1 und 12 angeben (darüber wird die Schätzung ungenau).');
   const oneRM = Math.round(estimateOneRM(w, r) * 10) / 10;
-  athlete.strength[key] = { weight: w, reps: r, oneRM, date: now.toISOString().slice(0, 10) };
+  athlete.strength[key] = { source: 'set', weight: w, reps: r, oneRM, date };
   return athlete.strength[key];
 }
 
-module.exports = { EXERCISES, SCHEMES, schemeFor, mainExercise, accessoryExercise, estimateOneRM, saveReference, roundKg };
+// Übersicht für die Einstellungen (Einheit A / B)
+function overview(athlete) {
+  const st = (athlete && athlete.strength) || {};
+  const group = (keys) => keys.map((k) => ({ key: k, name: EXERCISES[k].name, note: EXERCISES[k].note || null, oneRM: st[k] ? half(st[k].oneRM) : null, ref: refInfo(st[k]) }));
+  return {
+    A: group(['legpress', 'legcurl', 'latpull', 'backext', 'abs']),
+    B: group(['legpress1', 'calfraise', 'row', 'abductor', 'rotation'])
+  };
+}
+
+module.exports = { half, EXERCISES, SCHEMES, schemeFor, mainExercise, accessoryExercise, estimateOneRM, saveReference, overview, roundKg };
