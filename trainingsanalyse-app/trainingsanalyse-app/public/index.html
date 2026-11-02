@@ -477,6 +477,33 @@
   <div class="sheet-body" id="session-detail-body"></div>
 </dialog>
 
+<!-- ============ KRAFT: 1RM ============ -->
+<dialog id="strength-dialog" class="sheet sheet-small">
+  <div class="sheet-header">
+    <h2>Maximalgewicht</h2>
+    <button class="pill-btn" id="close-strength-btn" type="button">Abbrechen</button>
+  </div>
+  <form id="strength-form" class="sheet-body">
+    <div class="card form-card">
+      <div style="font-weight:600" id="strength-ex-name"></div>
+      <div class="small muted">Trag einen fordernden Satz ein (Gewicht × Wiederholungen, höchstens 12). Daraus wird dein 1RM geschätzt – ein echter Maximaltest ist nicht nötig.</div>
+      <div class="form-row two-col">
+        <div>
+          <label for="strength-weight">Gewicht (kg)</label>
+          <input id="strength-weight" type="text" inputmode="decimal" required />
+        </div>
+        <div>
+          <label for="strength-reps">Wiederholungen</label>
+          <input id="strength-reps" type="number" inputmode="numeric" min="1" max="12" required />
+        </div>
+      </div>
+      <div class="small" id="strength-preview" style="color:var(--accent)"></div>
+      <button type="submit" class="primary-btn">Speichern</button>
+      <button type="button" class="link-btn" id="strength-delete-btn">Eintrag löschen</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- ============ EINHEIT ABGEBROCHEN ============ -->
 <dialog id="abort-dialog" class="sheet sheet-small">
   <div class="sheet-header">

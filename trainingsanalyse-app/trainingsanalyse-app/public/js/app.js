@@ -782,6 +782,68 @@ function spontanIcon(w) {
   return sportIcon(g);
 }
 
+// Kraft: Satz-Tabelle (Aufwärmen + Arbeitssätze) mit % 1RM, kg und Wdh.-Reserve
+function strengthSets(st) {
+  return el('span', { class: 'set-block' }, [
+    el('span', { class: 'set-table' }, st.sets.map((x) => el('span', { class: `set-row${x.warmup ? ' warmup' : ''}` }, [
+      el('span', { class: 'set-name' }, x.warmup ? 'Aufwärmen' : x.label),
+      el('span', { class: 'set-load' }, `${x.reps} × ${x.kg || `${x.pct} 1RM`}`),
+      el('span', { class: 'set-sub' }, [x.kg ? `${x.pct} 1RM` : null, x.rir].filter(Boolean).join(' · '))
+    ]))),
+    el('button', { class: 'set-ref-btn', type: 'button', onclick: () => openStrengthDialog(st) },
+      st.oneRM ? `1RM ≈ ${st.oneRM} kg (aus ${String(st.ref.weight).replace('.', ',')} kg × ${st.ref.reps}) · ändern` : '1RM eintragen → kg anzeigen')
+  ]);
+}
+
+let strengthStep = null;
+function openStrengthDialog(st) {
+  strengthStep = st;
+  document.getElementById('strength-ex-name').textContent = st.text.split(' – ')[0];
+  document.getElementById('strength-weight').value = st.ref ? st.ref.weight : '';
+  document.getElementById('strength-reps').value = st.ref ? st.ref.reps : '';
+  document.getElementById('strength-delete-btn').hidden = !st.ref;
+  updateStrengthPreview();
+  document.getElementById('strength-dialog').showModal();
+}
+
+function updateStrengthPreview() {
+  const w = Number(document.getElementById('strength-weight').value.replace(',', '.'));
+  const r = Number(document.getElementById('strength-reps').value);
+  const out = document.getElementById('strength-preview');
+  if (w > 0 && r >= 1 && r <= 12) out.textContent = `Geschätztes 1RM: ${Math.round(r === 1 ? w : w * (1 + r / 30))} kg`;
+  else if (r > 12) out.textContent = 'Bitte einen Satz mit höchstens 12 Wiederholungen – darüber wird die Schätzung ungenau.';
+  else out.textContent = '';
+}
+
+async function saveStrengthRef(weight, reps) {
+  try {
+    const res = await fetch('/api/strength', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exercise: strengthStep.exercise, weight, reps })
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Unbekannter Fehler');
+    document.getElementById('strength-dialog').close();
+    await refresh();
+    if (document.getElementById('session-detail-dialog').open && openSessionId) openSessionDetail(openSessionId);
+    if (document.getElementById('spontan-dialog').open) loadSpontan();
+  } catch (err) {
+    alert('Konnte nicht gespeichert werden: ' + err.message);
+  }
+}
+
+function setupStrengthDialog() {
+  const dlg = document.getElementById('strength-dialog');
+  document.getElementById('close-strength-btn').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+  document.getElementById('strength-weight').addEventListener('input', updateStrengthPreview);
+  document.getElementById('strength-reps').addEventListener('input', updateStrengthPreview);
+  document.getElementById('strength-delete-btn').addEventListener('click', () => saveStrengthRef(null, null));
+  document.getElementById('strength-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveStrengthRef(Number(document.getElementById('strength-weight').value.replace(',', '.')), Number(document.getElementById('strength-reps').value));
+  });
+}
+
 function workoutCard(w, whyTitle = 'Warum dieser Vorschlag?') {
   const meta = [`${w.minutes} min`, w.distance ? `ca. ${w.distance.toLocaleString('de-DE')} m` : null].filter(Boolean).join(' · ');
   return el('div', { class: 'card spontan-card' }, [
@@ -803,9 +865,11 @@ function workoutCard(w, whyTitle = 'Warum dieser Vorschlag?') {
       ]),
       el('span', { class: 'step-text' }, [
         st.text,
-        st.pace || st.watts || st.rpm ? el('span', { class: 'step-target' }, st.pace ? `${st.pace} · Laufband ${st.speed}` : [st.watts, st.rpm ? `${st.rpm} U/min` : null].filter(Boolean).join(' · ')) : null
+        st.pace || st.watts || st.rpm ? el('span', { class: 'step-target' }, st.pace ? `${st.pace} · Laufband ${st.speed}` : [st.watts, st.rpm ? `${st.rpm} U/min` : null].filter(Boolean).join(' · ')) : null,
+        st.sets ? strengthSets(st) : null
       ])
     ]))),
+    w.scheme ? el('p', { class: 'muted small', style: 'margin:12px 0 0' }, w.scheme) : null,
     w.steps.some((st) => st.hr) ? null : (w.sport === 'strength' ? null : el('p', { class: 'muted small', style: 'margin:12px 0 0' }, 'Trag Maximal- und Ruhepuls in den Einstellungen ein, dann siehst du hier zu jedem Abschnitt den Zielpuls.')),
     w.sport === 'run' && !w.steps.some((st) => st.pace) && w.steps.some((st) => st.zone) ? el('p', { class: 'muted small', style: 'margin:12px 0 0' }, ['Mit einer Bestzeit siehst du hier auch das Zieltempo. ', el('button', { class: 'link-btn', type: 'button', onclick: () => openSettings('perf') }, 'Bestzeit eintragen')]) : null,
     w.sport === 'bike' && !w.steps.some((st) => st.watts) && w.steps.some((st) => st.zone) ? el('p', { class: 'muted small', style: 'margin:12px 0 0' }, ['Mit deiner FTP siehst du hier auch Watt-Vorgaben fürs Skillbike. ', el('button', { class: 'link-btn', type: 'button', onclick: () => openSettings('perf') }, 'FTP eintragen')]) : null,
@@ -1125,7 +1189,7 @@ function openSessionDetail(id, list) {
     sport: g.key, sportLabel: `${s.weekday}, ${new Date(s.day + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })} · ${sportLabel(s.sport)}`,
     title: s.workout.title, intensity: s.intensity, intensityLabel: INTENSITY_LABELS[s.intensity] || '',
     minutes: s.targetDurationMin, distance: s.workout.distance, steps: s.workout.steps,
-    code: s.workout.code, device: s.workout.device, created: s.workout.created, why
+    code: s.workout.code, device: s.workout.device, created: s.workout.created, scheme: s.workout.scheme, why
   };
   document.getElementById('session-detail-title').textContent = s.workout.title;
   mount('session-detail-body', workoutCard(w, 'Wozu diese Einheit?'), !list && s.status === 'planned' ? moveBox(s) : null);
@@ -1804,6 +1868,7 @@ function setupActivityUi() {
   setupAbsenceForm();
   setupPlanTabs();
   setupAbortDialog();
+  setupStrengthDialog();
   const sdDialog = document.getElementById('session-detail-dialog');
   document.getElementById('close-session-detail-btn').addEventListener('click', () => sdDialog.close());
   loadSpontanPrefs();

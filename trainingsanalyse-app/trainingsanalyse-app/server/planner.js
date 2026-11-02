@@ -791,7 +791,7 @@ function decorateSessions(store) {
     const hill = g === 'run' && s.kind === 'quality' && s.intensity === 'hard' && weekNo % 2 === 1;
     // Rad "mittel": im Wochenwechsel Sweet Spot normal und Kraftausdauer (niedrige Trittfrequenz)
     const lowCadence = g === 'bike' && s.intensity === 'moderate' && weekNo % 2 === 0;
-    const ctx = Object.assign({}, ctxBase, { strengthCount: s.variant === 'B' ? 1 : 0, hill, lowCadence });
+    const ctx = Object.assign({}, ctxBase, { strengthCount: s.variant === 'B' ? 1 : 0, hill, lowCadence, phase: phaseKey });
     const w = workouts.buildWorkout(g, s.intensity, s.targetDurationMin, ctx);
     let title = w.title;
     if (s.kind === 'long') title = g === 'bike' ? 'Lange Ausfahrt' : g === 'run' ? 'Langer Lauf' : title;
@@ -817,7 +817,8 @@ function decorateSessions(store) {
       workout: {
         title, code, device: g === 'strength' ? 'technogym' : 'watch', created: !!lib[code],
         distance: w.distance || null, steps, mainHr: main ? main.hr : null,
-        mainPace: mainT && mainT.pace ? mainT.pace : null, mainWatts: mainT && mainT.watts ? mainT.watts : null
+        mainPace: mainT && mainT.pace ? mainT.pace : null, mainWatts: mainT && mainT.watts ? mainT.watts : null,
+        scheme: w.strengthScheme || null
       }
     });
   });

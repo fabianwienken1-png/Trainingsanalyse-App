@@ -9,6 +9,7 @@
 const analysis = require('./analysis');
 const recovery = require('./recovery');
 const performance = require('./performance');
+const strength = require('./strength');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -335,24 +336,25 @@ function buildWorkoutBase(sport, intensity, minutes, ctx) {
   // Leichte Variante (Entlastung/Tapering): weniger Sätze, mittlere Last.
   const useA = ctx.strengthCount % 2 === 0;
   const light = intensity === 'easy';
-  const heavy = light ? '2 × 8' : '3–4 × 4–6';
-  const heavyText = light ? 'mittleres Gewicht, 2–3 Wdh. Reserve' : 'schwer: die letzte Wdh. ist fordernd, aber sauber – 2–3 min Pause';
-  const main = useA
-    ? ['Beinpresse', 'Beinbeuger (Leg Curl)', 'Latzug']
-    : ['Beinpresse einbeinig', 'Wadenheben (Beinpresse)', 'Rudern (Low Row)'];
-  const accessory = useA ? ['Rückenstrecker', 'Bauchmaschine'] : ['Abduktoren', 'Rumpfrotation'];
+  const scheme = strength.schemeFor(ctx.phase, light);
+  const main = useA ? ['legpress', 'legcurl', 'latpull'] : ['legpress1', 'calfraise', 'row'];
+  const accessory = useA ? ['backext', 'abs'] : ['abductor', 'rotation'];
   const jumps = useA
     ? { label: light ? '2 × 10' : '3 × 10', text: 'Pogo-Hops: kurze, federnde Sprünge aus dem Fußgelenk, Knie fast gestreckt' }
     : { label: light ? '2 × 5' : '3 × 5', text: 'Kniebeuge-Sprünge oder Box-Jumps, explosiv hoch, leise landen – volle Pause' };
   const count = D >= 45 ? 2 : D >= 35 ? 1 : 0;
+  const hasRefs = main.some((k) => ctx.athlete && ctx.athlete.strength && ctx.athlete.strength[k]);
   return {
     title: `Kraft Einheit ${useA ? 'A' : 'B'}`,
+    strengthScheme: scheme.why,
     steps: [
-      { label: '8 min', text: 'aufwärmen auf Rad oder Crosstrainer, dann je 1 leichter Satz der ersten Übung' },
-      light ? null : jumps,
-      ...main.map((e) => ({ label: heavy, text: `${e} – ${heavyText}` })),
-      ...accessory.slice(0, count).map((e) => ({ label: '2 × 10–12', text: `${e} – 60–90 s Pause` })),
-      light ? { label: 'Hinweis', text: 'Leichte Variante (Entlastung oder eingeschränkte Erholung): Technik und Spannung halten, nicht ausbelasten' } : { label: 'Hinweis', text: 'Nicht am Tag vor einer harten Einheit. Gewicht steigern, sobald 6 Wdh. in allen Sätzen sauber gehen.' }
+      { label: '8 min', text: 'aufwärmen auf Rad oder Crosstrainer' },
+      scheme === strength.SCHEMES.light ? null : jumps,
+      ...main.map((k) => strength.mainExercise(k, scheme, ctx.athlete)),
+      ...accessory.slice(0, count).map((k) => strength.accessoryExercise(k, ctx.athlete)),
+      scheme === strength.SCHEMES.light
+        ? { label: 'Hinweis', text: 'Leichte Variante (Entlastung, Tapering oder eingeschränkte Erholung): Technik und Spannung halten, nicht ausbelasten.' }
+        : { label: 'Hinweis', text: `Nicht am Tag vor einer harten Einheit. Gehen alle Sätze mit mehr als ${scheme.rir} Wdh. Reserve, beim nächsten Mal 2,5–5 kg mehr – und den neuen Satz unter „1RM“ eintragen.${hasRefs ? '' : ' Prozent = Anteil deines Maximalgewichts (1RM): einmal je Übung einen fordernden Satz eintragen, dann stehen hier die kg.'}` }
     ]
   };
 }
@@ -497,7 +499,7 @@ function suggest(store, opts = {}) {
     return null;
   };
 
-  const ctx = { athlete, swimPace: swimPace(acts), strengthCount: strengthTotal, targets: performance.targetsFor(store) };
+  const ctx = { athlete, swimPace: swimPace(acts), strengthCount: strengthTotal, targets: performance.targetsFor(store), phase: store.plan && store.plan.lastDecision ? store.plan.lastDecision.phase : null };
   const make = (g, why, forceIntensity, forceMinutes) => {
     const sportIntensity = forceIntensity || intensity;
     let mins = forceMinutes || minutes;

@@ -34,6 +34,7 @@ const auth = require('./auth');
 const athleteHr = require('./athlete-hr');
 const spontaneous = require('./spontaneous');
 const bikes = require('./bikes');
+const strength = require('./strength');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -783,6 +784,25 @@ function performanceInfo(s) {
     lthr: performance.lthrInfo(s)
   };
 }
+
+// Kraft: Referenzsatz je Übung (Gewicht × Wdh.) → geschätztes 1RM für kg-Vorgaben.
+// weight null = Eintrag löschen.
+route('POST', '/api/strength', async (req, res) => {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (err) {
+    return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
+  }
+  const s = await loadStore();
+  try {
+    const ref = strength.saveReference(s.athlete, body.exercise, body.weight, body.reps);
+    await saveStore(s);
+    sendJson(res, 200, { exercise: body.exercise, ref });
+  } catch (err) {
+    sendError(res, 400, err.message);
+  }
+});
 
 // Gefühlte Anstrengung (RPE 1–10) zu einer Aktivität speichern; rpe null = löschen
 route('POST', '/api/activities/feedback', async (req, res) => {
