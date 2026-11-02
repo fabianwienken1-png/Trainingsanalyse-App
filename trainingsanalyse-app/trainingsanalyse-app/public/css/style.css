@@ -163,6 +163,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .chip.solid-muted { background: var(--surface-2); color: var(--text-2); }
 .chip.outline-good { color: var(--good); border: 1px solid #1f4a2e; }
 .chip.outline-danger { color: var(--danger); border: 1px solid #5a2a26; }
+.chip.outline-warning { color: var(--warning); border: 1px solid #5a4520; }
 
 .dot { width: 8px; height: 8px; border-radius: 4px; display: inline-block; flex-shrink: 0; }
 
@@ -260,6 +261,9 @@ button:disabled { opacity: 0.5; cursor: default; }
 .session-text .desc { font-size: 13px; color: var(--muted); }
 .session-card.missed { opacity: 0.75; }
 .session-card.missed .title { text-decoration: line-through; }
+.session-card.partial { border-color: #5a4520; }
+.abort-info { font-size: 13px; color: var(--warning); padding-top: 8px; }
+.reset-row { display: flex; gap: 18px; flex-wrap: wrap; }
 .session-actions { display: flex; gap: 8px; }
 .session-actions button {
   flex: 1; min-height: 44px; border-radius: 12px;

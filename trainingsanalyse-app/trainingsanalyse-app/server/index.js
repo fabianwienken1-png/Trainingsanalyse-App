@@ -329,13 +329,29 @@ route('POST', '/api/plan/session-status', async (req, res) => {
     return sendError(res, 400, 'Ungültiger JSON-Body: ' + err.message);
   }
   const { sessionId, status } = body || {};
-  if (!sessionId || !['planned', 'done', 'missed'].includes(status)) {
-    return sendError(res, 400, 'Felder "sessionId" und "status" (planned|done|missed) sind erforderlich.');
+  if (!sessionId || !['planned', 'done', 'missed', 'partial'].includes(status)) {
+    return sendError(res, 400, 'Felder "sessionId" und "status" (planned|done|missed|partial) sind erforderlich.');
   }
   const s = await loadStore();
   const session = (s.plan.sessions || []).find((sess) => sess.id === sessionId);
   if (!session) {
     return sendError(res, 404, 'Session nicht gefunden (evtl. wurde inzwischen eine neue Woche geplant).');
+  }
+  if (status === 'partial') {
+    // Vorzeitig abgebrochen: tatsächliche Dauer (Standard: Dauer des zugeordneten
+    // Trainings, sonst halbe Zieldauer) und optional ein Grund
+    let actualMin = Number(body.actualMin);
+    if (!Number.isFinite(actualMin) || actualMin <= 0) {
+      const act = session.matchedActivityId && (s.activities || []).find((a) => a.id === session.matchedActivityId);
+      actualMin = act && act.movingTimeSec ? act.movingTimeSec / 60 : session.targetDurationMin / 2;
+    }
+    session.actualMin = Math.max(1, Math.min(600, Math.round(actualMin)));
+    session.abortReason = planner.ABORT_REASONS[body.reason] ? body.reason : null;
+    session.abortNote = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 200) : null;
+  } else {
+    delete session.actualMin;
+    delete session.abortReason;
+    delete session.abortNote;
   }
   session.status = status;
   session.manualOverride = status !== 'planned';
@@ -475,7 +491,7 @@ function weekReview(s) {
   if (!h || !h.weekStart) return null;
   const end = planner.addDaysKey(h.weekStart, 6);
   const sessions = (h.sessions || []).filter((x) => x.kind !== 'mobility' && x.kind !== 'race' && x.status !== 'absent');
-  const done = sessions.filter((x) => x.status === 'done');
+  const done = sessions.filter((x) => x.status === 'done' || x.status === 'partial');
   const acts = (s.activities || []).filter((a) => {
     const k = analysis.dayKeyOf(new Date(a.startDate));
     return k >= h.weekStart && k <= end;
@@ -495,6 +511,7 @@ function weekReview(s) {
     sleepAvg: avg(sleepVals),
     rpeAvg: avg(rpes),
     missed: sessions.filter((x) => x.status === 'missed').map((x) => `${x.weekday} ${x.sport}`),
+    aborted: sessions.filter((x) => x.status === 'partial').map((x) => `${x.weekday} ${x.sport}`),
     next: s.plan.lastDecision ? { phaseLabel: s.plan.lastDecision.phaseLabel, reason: s.plan.lastDecision.reason } : null
   };
 }

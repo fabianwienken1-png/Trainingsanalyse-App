@@ -722,10 +722,28 @@ function evaluatePreviousWeek(store) {
     return { ...session, status: match ? 'done' : 'missed', matchedActivityId: match ? match.id : null };
   });
   const counted = evaluated.filter((s) => s.kind !== 'mobility' && s.status !== 'absent'); // Dehnen und Krank/Urlaub zählen nicht
-  const doneCount = counted.filter((s) => s.status === 'done').length;
+  const doneCount = counted.reduce((n, s) => n + sessionCredit(s), 0);
   const completionRate = counted.length > 0 ? doneCount / counted.length : 1;
   const summary = analysis.computeWeeklySummary(activities, athlete, weekStart);
   return { weekStart: plan.currentWeekStart, sessions: evaluated, completionRate: round1(completionRate * 100), summary, phase: plan.lastDecision ? plan.lastDecision.phase : null };
+}
+
+// Gründe für einen vorzeitigen Abbruch (Anzeige im Frontend)
+const ABORT_REASONS = {
+  time: 'Keine Zeit',
+  tired: 'Erschöpft',
+  pain: 'Schmerzen',
+  sick: 'Unwohl/krank',
+  other: 'Sonstiges'
+};
+
+// Anteil, mit dem eine Einheit zur Erfüllungsquote zählt: erledigt = 1,
+// abgebrochen = 1 ab der Hälfte der Zieldauer, sonst 0,5 (Reiz war da, aber kürzer)
+function sessionCredit(s) {
+  if (s.status === 'done') return 1;
+  if (s.status !== 'partial') return 0;
+  const target = s.targetDurationMin || 0;
+  return target && (s.actualMin || 0) >= target * 0.5 ? 1 : 0.5;
 }
 
 // Laufende Woche: Status "erledigt" automatisch setzen, sobald das passende
@@ -954,5 +972,5 @@ function adjustSession(store, sessionId, action, reason) {
 
 module.exports = {
   generateNextWeekPlan, ensureCurrentPlan, replanCurrentWeek, evaluatePreviousWeek, autoMarkDone,
-  decorateSessions, previewNextWeek, seasonOutline, suggestAdjustment, adjustSession, getGoal, getRaces, mainRace, isAbsent, raceMinutes, addDaysKey, phaseFor, DISTANCES, PHASES
+  decorateSessions, previewNextWeek, seasonOutline, suggestAdjustment, adjustSession, getGoal, getRaces, mainRace, isAbsent, raceMinutes, addDaysKey, phaseFor, DISTANCES, PHASES, ABORT_REASONS, sessionCredit
 };

@@ -477,6 +477,32 @@
   <div class="sheet-body" id="session-detail-body"></div>
 </dialog>
 
+<!-- ============ EINHEIT ABGEBROCHEN ============ -->
+<dialog id="abort-dialog" class="sheet sheet-small">
+  <div class="sheet-header">
+    <h2>Vorzeitig beendet</h2>
+    <button class="pill-btn" id="close-abort-btn" type="button">Abbrechen</button>
+  </div>
+  <form id="abort-form" class="sheet-body">
+    <div class="card form-card">
+      <div class="small muted" id="abort-session-label"></div>
+      <div class="form-row">
+        <label for="abort-minutes">Tatsächlich trainiert (Minuten)</label>
+        <input id="abort-minutes" type="number" inputmode="numeric" min="1" max="600" required />
+      </div>
+      <div class="form-row">
+        <span class="label-like">Grund (optional)</span>
+        <div class="chip-row wrap" id="abort-reasons"></div>
+      </div>
+      <div class="form-row">
+        <label for="abort-note">Notiz (optional)</label>
+        <input id="abort-note" type="text" maxlength="200" placeholder="z.B. nach den Intervallen gestoppt" />
+      </div>
+      <button type="submit" class="primary-btn">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- ============ ERKLÄRUNG KENNZAHL ============ -->
 <dialog id="info-dialog" class="sheet sheet-small">
   <div class="sheet-header">

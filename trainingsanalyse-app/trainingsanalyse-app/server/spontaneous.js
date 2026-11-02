@@ -457,7 +457,7 @@ function suggest(store, opts = {}) {
   // Wunsch-Intensität, wenn nichts dagegen spricht
   let target = 'easy';
   const hardLast48 = (avgDay > 0 && yesterdayLoad > avgDay * 1.4) || todayLoad > 0;
-  const hardThisWeek = sessions.filter((s) => s.intensity === 'hard' && s.status === 'done').length;
+  const hardThisWeek = sessions.filter((s) => s.intensity === 'hard' && (s.status === 'done' || s.status === 'partial')).length;
   if (!hardLast48 && hardThisWeek < 2) target = acwr !== null && acwr < 0.8 ? 'hard' : 'moderate';
   if (minutes >= 100) target = minIntensity(target, 'moderate'); // lange Einheiten eher ruhig
   const intensity = minIntensity(target, cap);

@@ -990,9 +990,9 @@ function renderPlan() {
 
   const sessions = plan.sessions.filter((s) => s.kind !== 'race' && s.kind !== 'mobility');
   const total = sessions.length;
-  const done = sessions.filter((s) => s.status === 'done').length;
+  const done = sessions.filter((s) => s.status === 'done' || s.status === 'partial').length;
   const plannedMin = sessions.reduce((a, s) => a + s.targetDurationMin, 0);
-  const doneMin = sessions.filter((s) => s.status === 'done').reduce((a, s) => a + s.targetDurationMin, 0);
+  const doneMin = sessions.reduce((a, s) => a + (s.status === 'done' ? s.targetDurationMin : s.status === 'partial' ? Math.min(s.actualMin || 0, s.targetDurationMin) : 0), 0);
   const countdown = d.weeksToRace !== null && d.weeksToRace !== undefined && d.weeksToRace > 0
     ? `noch ${d.weeksToRace} ${d.weeksToRace === 1 ? 'Woche' : 'Wochen'} bis ${goal.name || 'zum Wettkampf'}`
     : d.weeksToRace === 0 ? 'Wettkampfwoche!' : (goal.date ? '' : 'kein Wettkampf eingetragen');
@@ -1038,7 +1038,20 @@ function renderPlan() {
     let chip = null;
     if (s.status === 'done') {
       chip = el('span', { class: 'chip outline-good' }, 'Erledigt');
-      footer = el('button', { class: 'reset-btn', type: 'button', onclick: () => onSetSessionStatus(s.id, 'planned') }, 'Zurücksetzen');
+      footer = el('div', { class: 'reset-row' }, [
+        el('button', { class: 'reset-btn', type: 'button', onclick: () => onSetSessionStatus(s.id, 'planned') }, 'Zurücksetzen'),
+        el('button', { class: 'reset-btn', type: 'button', onclick: () => openAbortDialog(s) }, 'Vorzeitig beendet?')
+      ]);
+    } else if (s.status === 'partial') {
+      chip = el('span', { class: 'chip outline-warning' }, 'Abgebrochen');
+      const info = [`${s.actualMin} von ${s.targetDurationMin} min`, ABORT_REASON_LABELS[s.abortReason], s.abortNote].filter(Boolean).join(' · ');
+      footer = el('div', {}, [
+        el('div', { class: 'abort-info' }, info),
+        el('div', { class: 'reset-row' }, [
+          el('button', { class: 'reset-btn', type: 'button', onclick: () => openAbortDialog(s) }, 'Bearbeiten'),
+          el('button', { class: 'reset-btn', type: 'button', onclick: () => onSetSessionStatus(s.id, 'planned') }, 'Zurücksetzen')
+        ])
+      ]);
     } else if (s.status === 'absent') {
       chip = el('span', { class: 'chip solid-muted' }, 'Krank/Urlaub');
     } else if (s.status === 'missed') {
@@ -1049,6 +1062,7 @@ function renderPlan() {
         el('button', { type: 'button', onclick: () => onSetSessionStatus(s.id, 'done') }, 'Erledigt'),
         el('button', { type: 'button', class: 'ghost', onclick: () => onSetSessionStatus(s.id, 'missed') }, 'Ausgelassen')
       ]);
+      footer = el('div', {}, [footer, el('button', { class: 'reset-btn', type: 'button', onclick: () => openAbortDialog(s) }, 'Vorzeitig beendet')]);
     }
     if (s.status === 'planned') {
       const extra = s.adjusted
@@ -1406,20 +1420,66 @@ function planTargetHr(session) {
   return Math.round(a.restingHR + (a.maxHR - a.restingHR) * (lo + (hi - lo) * pos + swimOffset));
 }
 
-async function onSetSessionStatus(sessionId, status) {
+const ABORT_REASON_LABELS = { time: 'Keine Zeit', tired: 'Erschöpft', pain: 'Schmerzen', sick: 'Unwohl/krank', other: 'Sonstiges' };
+let abortSession = null;
+let abortReason = null;
+
+// Dialog "Vorzeitig beendet": tatsächliche Dauer (vorbelegt mit dem zugeordneten
+// Training, sonst bisherigem Wert bzw. halber Zieldauer) + optionaler Grund
+function openAbortDialog(s) {
+  abortSession = s;
+  abortReason = s.abortReason || null;
+  const act = s.matchedActivityId && allActivities.find((a) => a.id === s.matchedActivityId);
+  const preset = s.actualMin || (act && act.movingTimeSec ? Math.round(act.movingTimeSec / 60) : Math.round(s.targetDurationMin / 2));
+  document.getElementById('abort-session-label').textContent =
+    `${s.workout ? s.workout.title : sportLabel(s.sport)} · geplant ${s.targetDurationMin} min`;
+  const minutes = document.getElementById('abort-minutes');
+  minutes.value = preset;
+  minutes.max = String(Math.max(600, s.targetDurationMin));
+  document.getElementById('abort-note').value = s.abortNote || '';
+  renderAbortReasons();
+  document.getElementById('abort-dialog').showModal();
+}
+
+function renderAbortReasons() {
+  mount('abort-reasons', ...Object.entries(ABORT_REASON_LABELS).map(([key, label]) => el('button', {
+    class: 'filter-chip', type: 'button', 'aria-pressed': String(abortReason === key),
+    onclick: () => { abortReason = abortReason === key ? null : key; renderAbortReasons(); }
+  }, label)));
+}
+
+function setupAbortDialog() {
+  const dlg = document.getElementById('abort-dialog');
+  document.getElementById('close-abort-btn').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+  document.getElementById('abort-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!abortSession) return;
+    const ok = await onSetSessionStatus(abortSession.id, 'partial', {
+      actualMin: Number(document.getElementById('abort-minutes').value),
+      reason: abortReason,
+      note: document.getElementById('abort-note').value
+    });
+    if (ok) dlg.close();
+  });
+}
+
+async function onSetSessionStatus(sessionId, status, extra = {}) {
   try {
     const res = await fetch('/api/plan/session-status', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, status })
+      body: JSON.stringify({ sessionId, status, ...extra })
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(body.error || 'Unbekannter Fehler');
     }
     await refresh();
+    return true;
   } catch (err) {
     alert('Status konnte nicht gespeichert werden: ' + err.message);
+    return false;
   }
 }
 
@@ -1605,6 +1665,8 @@ function rpeScale(current, onPick) {
   return el('div', {}, [row, label]);
 }
 
+function reviewSport(m) { return m.replace('WeightTraining', 'Kraft').replace('Ride', 'Rad').replace('Run', 'Lauf').replace('Swim', 'Schwimmen'); }
+
 // Wochenrückblick: Mo–Mi auf "Heute", bis er weggeklickt wird
 function renderWeekReview() {
   const r = currentState.weekReview;
@@ -1625,7 +1687,9 @@ function renderWeekReview() {
       el('div', {}, [el('div', { class: 'label' }, 'Trainingszeit'), el('div', { class: 'value' }, fmtHours(r.minutes / 60))]),
       el('div', {}, [el('div', { class: 'label' }, r.sleepAvg ? 'Ø Schlaf' : 'Ø Gefühl'), el('div', { class: 'value' }, r.sleepAvg ? fmtHours(r.sleepAvg) : r.rpeAvg ? `${fmtNum(r.rpeAvg, 1)}/10` : '–')])
     ]),
-    el('div', { class: 'small' }, verdict + (r.missed.length ? ` Ausgelassen: ${r.missed.map((m) => m.replace('WeightTraining', 'Kraft').replace('Ride', 'Rad').replace('Run', 'Lauf').replace('Swim', 'Schwimmen')).join(', ')}.` : '')),
+    el('div', { class: 'small' }, verdict
+      + (r.missed.length ? ` Ausgelassen: ${r.missed.map(reviewSport).join(', ')}.` : '')
+      + (r.aborted && r.aborted.length ? ` Vorzeitig beendet: ${r.aborted.map(reviewSport).join(', ')}.` : '')),
     r.next && r.next.reason ? el('div', { class: 'plan-reason' }, ['Diese Woche: ', r.next.reason]) : null
   ]));
 }
@@ -1739,6 +1803,7 @@ function setupActivityUi() {
   setupRaceForm();
   setupAbsenceForm();
   setupPlanTabs();
+  setupAbortDialog();
   const sdDialog = document.getElementById('session-detail-dialog');
   document.getElementById('close-session-detail-btn').addEventListener('click', () => sdDialog.close());
   loadSpontanPrefs();
